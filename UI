@@ -209,10 +209,11 @@ local function teleportToBoothAndClaim(model)
     -- position player a few studs in front of the claimed part and face away from the booth
     local front = claimedPart.CFrame.LookVector
     local distance = 3
-    local pos = claimedPart.Position + (-front) * distance
+    local pos = claimedPart.Position + (front) * distance
     pos = Vector3.new(pos.X, claimedPart.Position.Y + 3, pos.Z)
     pcall(function()
-        hrp.CFrame = CFrame.new(pos, pos + front)
+        -- orient to look opposite of the booth front (face away)
+        hrp.CFrame = CFrame.new(pos, pos - front)
     end)
     task.wait(0.2)
 
@@ -398,10 +399,21 @@ function serverHopNow(immediate)
             for _, s in ipairs(candidates) do
                 local instanceId = s.id or s.uuid or s.playbackId
                 if instanceId then
+                    local iid = tostring(instanceId)
+                    -- try teleport with player argument first, then fallback to without
                     local ok2, err = pcall(function()
-                        TeleportService:TeleportToPlaceInstance(placeId, instanceId, LocalPlayer)
+                        TeleportService:TeleportToPlaceInstance(placeId, iid, LocalPlayer)
                     end)
-                    if ok2 then return true end
+                    if not ok2 then
+                        warn("Teleport attempt failed (with player):", err)
+                        local ok3, err2 = pcall(function()
+                            TeleportService:TeleportToPlaceInstance(placeId, iid)
+                        end)
+                        if ok3 then return true end
+                        warn("Teleport attempt failed (no player):", err2)
+                    else
+                        return true
+                    end
                 end
             end
             return false
@@ -409,6 +421,8 @@ function serverHopNow(immediate)
 
         if ok and result then
             return
+        else
+            warn("serverHop iteration failed, retrying...", ok, result)
         end
         task.wait(0.1)
     end
