@@ -9,6 +9,8 @@ local TeleportService = game:GetService("TeleportService")
 local HttpService = game:GetService("HttpService")
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+-- Fixed place id for server hopping per user request
+local HOP_PLACE_ID = 87177901578723
 
 -- Settings (defaults)
 local SETTINGS = {
@@ -204,9 +206,13 @@ local function teleportToBoothAndClaim(model)
     local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
     local hrp = char:FindFirstChild("HumanoidRootPart")
     if not hrp then return false end
-    local targetCFrame = claimedPart.CFrame + Vector3.new(0, 2.5, 0)
+    -- position player a few studs in front of the claimed part and face away from the booth
+    local front = claimedPart.CFrame.LookVector
+    local distance = 3
+    local pos = claimedPart.Position + (-front) * distance
+    pos = Vector3.new(pos.X, claimedPart.Position.Y + 3, pos.Z)
     pcall(function()
-        hrp.CFrame = targetCFrame
+        hrp.CFrame = CFrame.new(pos, pos + front)
     end)
     task.wait(0.2)
 
@@ -277,11 +283,7 @@ local function claimFirstAvailable()
     return ok
 end
 
-local claimButton = addButton(frames.Booth, "Claim First Available Booth", function()
-    claimFirstAvailable()
-end)
-
--- Auto-run claim once UI loads
+-- Auto-run claim once UI loads (script already claims automatically)
 task.spawn(function()
     task.wait(0.5)
     pcall(claimFirstAvailable)
@@ -371,7 +373,7 @@ local function pickRandomCandidates(list, maxCount)
 end
 
 function serverHopNow(immediate)
-    local placeId = game.PlaceId
+    local placeId = HOP_PLACE_ID or game.PlaceId
     local currentJob = tostring(game.JobId)
     while true do
         local ok, result = pcall(function()
