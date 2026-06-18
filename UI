@@ -1,1 +1,299 @@
+-- donatetoplayers.lua
+-- UI: Booth / Main / Server tabs, draggable, mobile-friendly
+repeat task.wait() until game:IsLoaded()
+
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local LocalPlayer = Players.LocalPlayer
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+
+-- Settings (defaults)
+local SETTINGS = {
+    textUpdate = true,
+    dance = false,
+    textDelay = 30,
+}
+
+-- Helpers
+local function new(parent, class, props)
+    local obj = Instance.new(class)
+    if parent then obj.Parent = parent end
+    if props then
+        for k, v in pairs(props) do
+            pcall(function() obj[k] = v end)
+        end
+    end
+    return obj
+end
+
+-- Build UI
+local screen = new(PlayerGui, "ScreenGui", {Name = "DonateToPlayersUI", ResetOnSpawn=false, IgnoreGuiInset=true})
+
+local window = new(screen, "Frame", {
+    Name = "Window",
+    AnchorPoint = Vector2.new(0.5,0.5),
+    Position = UDim2.new(0.5, 0, 0.5, 0),
+    Size = UDim2.new(0.35, 0, 0.55, 0),
+    BackgroundColor3 = Color3.fromRGB(31,31,31),
+    BorderSizePixel = 0,
+})
+
+-- Title bar (green strip) used for drag
+local titleBar = new(window, "Frame", {
+    Name = "TitleBar",
+    Size = UDim2.new(1,0,0,36),
+    BackgroundColor3 = Color3.fromRGB(2, 160, 79),
+})
+local title = new(titleBar, "TextLabel", {
+    Text = "PLS DONATE",
+    TextColor3 = Color3.new(1,1,1),
+    BackgroundTransparency = 1,
+    Font = Enum.Font.GothamBold,
+    TextSize = 18,
+    Position = UDim2.new(0, 12, 0, 6)
+})
+
+-- Tab buttons
+local tabRow = new(window, "Frame", {
+    Name = "TabRow",
+    Position = UDim2.new(0,8,0,44),
+    Size = UDim2.new(1,-16,0,36),
+    BackgroundTransparency = 1,
+})
+
+local function makeTabButton(name, parent)
+    local btn = new(parent, "TextButton", {
+        Text = name,
+        BackgroundColor3 = Color3.fromRGB(60,60,60),
+        TextColor3 = Color3.new(1,1,1),
+        Size = UDim2.new(0, 110, 1, 0),
+        AutoButtonColor = false,
+        Font = Enum.Font.Gotham,
+        TextSize = 14,
+    })
+    return btn
+end
+
+local tabs = {}
+tabs.booth = makeTabButton("Booth", tabRow)
+tabs.main = makeTabButton("Main", tabRow)
+tabs.server = makeTabButton("Server", tabRow)
+
+-- Content area
+local content = new(window, "Frame", {
+    Name = "Content",
+    Position = UDim2.new(0,8,0,88),
+    Size = UDim2.new(1,-16,1,-96),
+    BackgroundTransparency = 1,
+})
+
+local function makeContentFrame(name)
+    local f = new(content, "Frame", {
+        Name = name.."Frame",
+        Size = UDim2.new(1,0,1,0),
+        BackgroundTransparency = 1,
+        Visible = false,
+    })
+    local layout = new(f, "UIListLayout", {Padding = UDim.new(0,8)})
+    layout.SortOrder = Enum.SortOrder.LayoutOrder
+    layout.Padding = UDim.new(0,8)
+    return f
+end
+
+local frames = {
+    Booth = makeContentFrame("Booth"),
+    Main = makeContentFrame("Main"),
+    Server = makeContentFrame("Server"),
+}
+
+frames.Booth.Visible = true
+
+-- Simple control factory
+local function addLabel(parent, text)
+    return new(parent, "TextLabel", {Text=text, BackgroundTransparency=1, TextColor3=Color3.new(1,1,1), Font=Enum.Font.Gotham, TextSize=14, Size=UDim2.new(1,0,0,20)})
+end
+
+local function addButton(parent, text, cb)
+    local btn = new(parent, "TextButton", {Text = text, Size = UDim2.new(0,0,0,30), BackgroundColor3=Color3.fromRGB(34,139,34), TextColor3=Color3.new(1,1,1), Font=Enum.Font.Gotham, TextSize=14})
+    btn.AutoButtonColor = true
+    btn.MouseButton1Click:Connect(function() pcall(cb) end)
+    return btn
+end
+
+local function addTextBox(parent, placeholder, onEnter)
+    local box = new(parent, "TextBox", {Text = "", PlaceholderText = placeholder, Size = UDim2.new(1,0,0,28), BackgroundColor3=Color3.fromRGB(44,44,44), TextColor3=Color3.fromRGB(220,220,220), Font=Enum.Font.Gotham, TextSize=14})
+    box.FocusLost:Connect(function(enter)
+        if enter then pcall(function() onEnter(box.Text) end) end
+    end)
+    return box
+end
+
+-- Booth tab controls (mimic image)
+addLabel(frames.Booth, "Text Update")
+local textUpdateToggle = addButton(frames.Booth, SETTINGS.textUpdate and "✓" or "", function()
+    SETTINGS.textUpdate = not SETTINGS.textUpdate
+    textUpdateToggle.Text = SETTINGS.textUpdate and "✓" or ""
+end)
+
+addLabel(frames.Booth, "Dance")
+local danceToggle = addButton(frames.Booth, SETTINGS.dance and "✓" or "", function()
+    SETTINGS.dance = not SETTINGS.dance
+    danceToggle.Text = SETTINGS.dance and "✓" or ""
+end)
+
+addLabel(frames.Booth, "Text Update Delay (S)")
+local delayBox = addTextBox(frames.Booth, tostring(SETTINGS.textDelay), function(v) SETTINGS.textDelay = tonumber(v) or SETTINGS.textDelay end)
+delayBox.Text = tostring(SETTINGS.textDelay)
+
+-- (Removed goal, text color, and custom text fields per user request)
+
+-- Claiming logic per user's spec
+local function findAvailableBooth()
+    local stands = workspace:FindFirstChild("Stands")
+    if not stands then return nil end
+    for _, model in ipairs(stands:GetChildren()) do
+        if model:IsA("Model") and model.Name == "Basic Booth" then
+            local usernameVal = model:FindFirstChild("Username")
+            if usernameVal and (usernameVal.Value == nil or usernameVal.Value == "") then
+                return model
+            end
+        end
+    end
+    return nil
+end
+
+local function teleportToBoothAndClaim(model)
+    if not model then return false end
+    -- Find ClaimedPart
+    local claimedPart = model:FindFirstChild("ClaimedPart") or model:FindFirstChildWhichIsA("BasePart")
+    if not claimedPart then return false end
+    -- Move player close to claimedPart
+    local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return false end
+    local targetCFrame = claimedPart.CFrame + Vector3.new(0, 2.5, 0)
+    pcall(function()
+        hrp.CFrame = targetCFrame
+    end)
+    task.wait(0.2)
+
+    -- try to find ProximityPrompt
+    local prompt = nil
+    for _, att in ipairs(claimedPart:GetDescendants()) do
+        if att:IsA("Attachment") then
+            local p = att:FindFirstChild("ClaimPrompt") or att:FindFirstChildWhichIsA("ProximityPrompt")
+            if p and p:IsA("ProximityPrompt") then
+                prompt = p
+                break
+            end
+        end
+    end
+    if not prompt then
+        prompt = model:FindFirstChild("ClaimPrompt", true)
+        if prompt and not prompt:IsA("ProximityPrompt") then prompt = nil end
+    end
+
+    if not prompt then return false end
+
+    -- Attempt to trigger the prompt; prefer safe client methods
+    local success = false
+    pcall(function()
+        if typeof(fireproximityprompt) == "function" then
+            fireproximityprompt(prompt, 1)
+            success = true
+            return
+        end
+    end)
+
+    if not success then
+        pcall(function()
+            if prompt.InputHoldBegin and prompt.InputHoldEnd then
+                prompt:InputHoldBegin()
+                task.wait(1)
+                prompt:InputHoldEnd()
+                success = true
+                return
+            end
+        end)
+    end
+
+    if not success then
+        pcall(function()
+            if prompt.Trigger then
+                prompt:Trigger()
+                success = true
+            end
+        end)
+    end
+
+    return success
+end
+
+local claimButton = addButton(frames.Booth, "Claim First Available Booth", function()
+    local b = findAvailableBooth()
+    if not b then
+        warn("No available Basic Booth found")
+        return
+    end
+    local ok = teleportToBoothAndClaim(b)
+    if ok then
+        warn("Claim attempt finished")
+    else
+        warn("Claim attempt failed")
+    end
+end)
+
+-- Tab switching
+local function selectTab(name)
+    for k,v in pairs(frames) do v.Visible = false end
+    frames[name].Visible = true
+end
+
+tabs.booth.MouseButton1Click:Connect(function() selectTab("Booth") end)
+tabs.main.MouseButton1Click:Connect(function() selectTab("Main") end)
+tabs.server.MouseButton1Click:Connect(function() selectTab("Server") end)
+
+-- Small Main and Server content placeholders
+addLabel(frames.Main, "Main settings will go here")
+addLabel(frames.Server, "Server tools will go here")
+
+-- Dragging logic (drag window by titleBar)
+local dragging = false
+local dragStart = Vector2.new()
+local startPos = window.Position
+
+titleBar.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true
+        dragStart = input.Position
+        startPos = window.Position
+    end
+end)
+UserInputService.InputChanged:Connect(function(input)
+    if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        local delta = input.Position - dragStart
+        local abs = {x = (startPos.X.Offset + delta.X), y = (startPos.Y.Offset + delta.Y)}
+        window.Position = UDim2.new(startPos.X.Scale, abs.x, startPos.Y.Scale, abs.y)
+    end
+end)
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = false
+    end
+end)
+
+-- Make UI scale-friendly on resize
+local function onResize()
+    local screenSize = workspace.CurrentCamera.ViewportSize
+    if screenSize.X < 700 then
+        window.Size = UDim2.new(0.9, 0, 0.8, 0)
+    else
+        window.Size = UDim2.new(0.35, 0, 0.55, 0)
+    end
+end
+RunService.Heartbeat:Connect(onResize)
+onResize()
+
+print("donatetoplayers UI loaded")
 
