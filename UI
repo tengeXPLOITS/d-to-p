@@ -5,6 +5,8 @@ repeat task.wait() until game:IsLoaded()
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
+local TeleportService = game:GetService("TeleportService")
+local HttpService = game:GetService("HttpService")
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 
@@ -13,6 +15,12 @@ local SETTINGS = {
     textUpdate = true,
     dance = false,
     textDelay = 30,
+    -- server hop settings
+    autoServerHop = false,
+    serverStayMinutes = 5,
+    serverHopRange = 6, -- user-facing max 24
+    -- main
+    antiAfk = false,
 }
 
 -- Helpers
@@ -36,9 +44,11 @@ local window = new(screen, "ImageLabel", {
     AnchorPoint = Vector2.new(0.5,0.5),
     Position = UDim2.new(0.5, 0, 0.5, 0),
     Size = UDim2.new(0.35, 0, 0.55, 0),
-    BackgroundTransparency = 1,
+    BackgroundTransparency = 0,
+    BackgroundColor3 = Color3.fromRGB(24,24,24),
     Image = "rbxassetid://2851929490",
     ImageColor3 = Color3.fromRGB(31,31,31),
+    ImageTransparency = 0,
     ScaleType = Enum.ScaleType.Slice,
     SliceCenter = Rect.new(12,12,12,12),
     BorderSizePixel = 0,
@@ -51,7 +61,7 @@ local titleBar = new(window, "Frame", {
     BackgroundColor3 = Color3.fromRGB(2, 160, 79),
 })
 local title = new(titleBar, "TextLabel", {
-    Text = "PLS DONATE",
+    Text = "Donate To Plrs <3",
     TextColor3 = Color3.new(1,1,1),
     BackgroundTransparency = 1,
     Font = Enum.Font.GothamBold,
@@ -166,13 +176,7 @@ local function addToggle(parent, labelText, initial, callback)
     return obj, container
 end
 
--- Booth tab controls (mimic image)
-local toggle1, _ = addToggle(frames.Booth, "Text Update", SETTINGS.textUpdate, function(b) SETTINGS.textUpdate = b end)
-local toggle2, _ = addToggle(frames.Booth, "Dance", SETTINGS.dance, function(b) SETTINGS.dance = b end)
-
-addLabel(frames.Booth, "Text Update Delay (S)")
-local delayBox = addTextBox(frames.Booth, tostring(SETTINGS.textDelay), function(v) SETTINGS.textDelay = tonumber(v) or SETTINGS.textDelay end)
-delayBox.Text = tostring(SETTINGS.textDelay)
+-- Booth tab controls: simplified per user request (removed text update, dance, and delay controls)
 
 -- (Removed goal, text color, and custom text fields per user request)
 
@@ -258,11 +262,11 @@ local function teleportToBoothAndClaim(model)
     return success
 end
 
-local claimButton = addButton(frames.Booth, "Claim First Available Booth", function()
+local function claimFirstAvailable()
     local b = findAvailableBooth()
     if not b then
         warn("No available Basic Booth found")
-        return
+        return false
     end
     local ok = teleportToBoothAndClaim(b)
     if ok then
@@ -270,9 +274,18 @@ local claimButton = addButton(frames.Booth, "Claim First Available Booth", funct
     else
         warn("Claim attempt failed")
     end
+    return ok
+end
+
+local claimButton = addButton(frames.Booth, "Claim First Available Booth", function()
+    claimFirstAvailable()
 end)
 
--- ensure claim button is centered by creating an enclosing frame if needed (UIListLayout centers 0.9 width items)
+-- Auto-run claim once UI loads
+task.spawn(function()
+    task.wait(0.5)
+    pcall(claimFirstAvailable)
+end)
 
 -- Tab switching
 local function selectTab(name)
@@ -285,8 +298,132 @@ tabs.main.MouseButton1Click:Connect(function() selectTab("Main") end)
 tabs.server.MouseButton1Click:Connect(function() selectTab("Server") end)
 
 -- Small Main and Server content placeholders
-addLabel(frames.Main, "Main settings will go here")
-addLabel(frames.Server, "Server tools will go here")
+-- Main tab: Anti AFK toggle
+-- anti-AFK implementation
+local antiAfkConn = nil
+local function setAntiAfk(enabled)
+    SETTINGS.antiAfk = enabled
+    if enabled then
+        if antiAfkConn then return end
+        antiAfkConn = LocalPlayer.Idled:Connect(function()
+            pcall(function()
+                local vu = game:GetService("VirtualUser")
+                vu:Button2Down(Vector2.new(0,0))
+                task.wait(1)
+                vu:Button2Up(Vector2.new(0,0))
+            end)
+        end)
+    else
+        if antiAfkConn then
+            antiAfkConn:Disconnect()
+            antiAfkConn = nil
+        end
+    end
+end
+
+local antiAfkToggle, _ = addToggle(frames.Main, "Anti AFK", SETTINGS.antiAfk, function(b)
+    setAntiAfk(b)
+end)
+setAntiAfk(SETTINGS.antiAfk)
+
+-- Server tab: Auto server hop, stay minutes, hop range, and immediate hop button
+local autoHopToggle, _ = addToggle(frames.Server, "Auto Server Hop", SETTINGS.autoServerHop, function(b)
+    SETTINGS.autoServerHop = b
+end)
+
+addLabel(frames.Server, "Server stay (minutes)")
+local stayBox = addTextBox(frames.Server, tostring(SETTINGS.serverStayMinutes), function(v)
+    local n = tonumber(v)
+    if n and n > 0 then SETTINGS.serverStayMinutes = n end
+    stayBox.Text = tostring(SETTINGS.serverStayMinutes)
+end)
+stayBox.Text = tostring(SETTINGS.serverStayMinutes)
+
+addLabel(frames.Server, "Server hop range (max 24)")
+local rangeBox = addTextBox(frames.Server, tostring(SETTINGS.serverHopRange), function(v)
+    local n = tonumber(v)
+    if n then
+        n = math.floor(n)
+        if n < 1 then n = 1 end
+        if n > 24 then n = 24 end
+        SETTINGS.serverHopRange = n
+    end
+    rangeBox.Text = tostring(SETTINGS.serverHopRange)
+end)
+rangeBox.Text = tostring(SETTINGS.serverHopRange)
+
+local serverHopBtn = addButton(frames.Server, "Server Hop Now", function()
+    task.spawn(function()
+        pcall(function() serverHopNow(true) end)
+    end)
+end)
+
+-- Server hop core functions
+local function pickRandomCandidates(list, maxCount)
+    local out = {}
+    local n = math.min(#list, maxCount)
+    for i=1,n do
+        local idx = math.random(1, #list)
+        table.insert(out, list[idx])
+        table.remove(list, idx)
+    end
+    return out
+end
+
+function serverHopNow(immediate)
+    local placeId = game.PlaceId
+    local currentJob = tostring(game.JobId)
+    while true do
+        local ok, result = pcall(function()
+            local servers = {}
+            local cursor = nil
+            repeat
+                local url = ("https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Asc&limit=100"):format(placeId)
+                if cursor then url = url.."&cursor="..cursor end
+                local res = HttpService:GetAsync(url)
+                local decoded = HttpService:JSONDecode(res)
+                for _, s in ipairs(decoded.data or {}) do
+                    if tostring(s.id) ~= currentJob then
+                        table.insert(servers, s)
+                    end
+                end
+                cursor = decoded.nextPageCursor
+            until not cursor
+
+            if #servers == 0 then return false end
+
+            local candidates = pickRandomCandidates(servers, math.min(SETTINGS.serverHopRange or 6, 24))
+            for _, s in ipairs(candidates) do
+                local instanceId = s.id or s.uuid or s.playbackId
+                if instanceId then
+                    local ok2, err = pcall(function()
+                        TeleportService:TeleportToPlaceInstance(placeId, instanceId, LocalPlayer)
+                    end)
+                    if ok2 then return true end
+                end
+            end
+            return false
+        end)
+
+        if ok and result then
+            return
+        end
+        task.wait(0.1)
+    end
+end
+
+-- Auto-hop loop (checks SETTINGS.autoServerHop)
+task.spawn(function()
+    while true do
+        if SETTINGS.autoServerHop then
+            local mins = math.max(0.1, (SETTINGS.serverStayMinutes or 5))
+            task.wait(mins * 60)
+            pcall(function() serverHopNow(false) end)
+        else
+            task.wait(1)
+        end
+    end
+end)
 
 -- Dragging logic (drag window by titleBar)
 local dragging = false
