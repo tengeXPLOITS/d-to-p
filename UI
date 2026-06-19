@@ -336,7 +336,6 @@ local function teleportToBoothAndClaim(model)
             end
         end
     end
-
     if not prompt then
         -- move to final position even if we couldn't find the prompt
         pcall(function()
@@ -350,39 +349,97 @@ local function teleportToBoothAndClaim(model)
         return false
     end
 
-    -- Attempt to trigger the prompt while at the claimedPart
-    local success = false
-    pcall(function()
-        if typeof(fireproximityprompt) == "function" then
-            fireproximityprompt(prompt, 1)
-            success = true
-            return
+    -- Robust prompt firing helper: try multiple nearby positions and several trigger methods.
+    local function robustFirePrompt(promptObj)
+        local basePos
+        if promptObj.Parent and promptObj.Parent:IsA("BasePart") then
+            basePos = promptObj.Parent.Position
+        else
+            basePos = anchorPart.Position
         end
-    end)
+        local cp = anchorPart.CFrame
+        local front = cp.LookVector
+        local right = cp.RightVector
+        local offsets = {
+            Vector3.new(0,0,0),
+            front * 0.5,
+            front * 1,
+            -front * 0.5,
+            right * 0.6,
+            -right * 0.6,
+            Vector3.new(0,0.8,0),
+            Vector3.new(0,-0.5,0),
+        }
 
-    if not success then
-        pcall(function()
-            if prompt.InputHoldBegin and prompt.InputHoldEnd then
-                prompt:InputHoldBegin()
-                task.wait(1)
-                prompt:InputHoldEnd()
-                success = true
-                return
-            end
-        end)
+        for _, off in ipairs(offsets) do
+            local tryPos = basePos + off
+            tryPos = Vector3.new(tryPos.X, basePos.Y + 2, tryPos.Z)
+            pcall(function()
+                local facing = hrp and hrp.CFrame and hrp.CFrame.LookVector
+                if facing then
+                    hrp.CFrame = CFrame.new(tryPos, tryPos + facing)
+                else
+                    hrp.CFrame = CFrame.new(tryPos)
+                end
+            end)
+            task.wait(0.08)
+
+            -- Try exploit helper first
+            local fired = false
+            pcall(function()
+                if typeof(fireproximityprompt) == "function" then
+                    fireproximityprompt(promptObj, 1)
+                    fired = true
+                end
+            end)
+            if fired then return true end
+
+            -- Try InputHold (for hold-required prompts)
+            pcall(function()
+                if promptObj.InputHoldBegin and promptObj.InputHoldEnd then
+                    promptObj:InputHoldBegin()
+                    task.wait(1)
+                    promptObj:InputHoldEnd()
+                    fired = true
+                end
+            end)
+            if fired then return true end
+
+            -- Try Trigger
+            pcall(function()
+                if promptObj.Trigger then
+                    promptObj:Trigger()
+                    fired = true
+                end
+            end)
+            if fired then return true end
+
+            -- Try touch emulation if a basepart is available and exploit exposes firetouchinterest
+            pcall(function()
+                local part = (promptObj.Parent and promptObj.Parent:IsA("BasePart")) and promptObj.Parent or nil
+                if part and firetouchinterest then
+                    -- try both argument orders to be safe across exploits
+                    pcall(function()
+                        firetouchinterest(part, hrp, 0)
+                        task.wait(0.05)
+                        firetouchinterest(part, hrp, 1)
+                    end)
+                    pcall(function()
+                        firetouchinterest(hrp, part, 0)
+                        task.wait(0.05)
+                        firetouchinterest(hrp, part, 1)
+                    end)
+                    fired = true
+                end
+            end)
+            if fired then return true end
+        end
+        return false
     end
 
-    if not success then
-        pcall(function()
-            if prompt.Trigger then
-                prompt:Trigger()
-                success = true
-            end
-        end)
-    end
-
-    if success then
-        -- after successful claim, move the player to their preferred final position
+    -- First attempt while standing at the claimedPart region
+    local okFire = robustFirePrompt(prompt)
+    if okFire then
         task.wait(0.12)
         pcall(function()
             if hrp and hrp.CFrame then
@@ -393,46 +450,20 @@ local function teleportToBoothAndClaim(model)
             end
         end)
         return true
-    else
-        -- if firing failed, move to finalPos and try once more
-        pcall(function()
-            if hrp and hrp.CFrame then
-                local facing = hrp.CFrame.LookVector
-                hrp.CFrame = CFrame.new(finalPos, finalPos + facing)
-            else
-                hrp.CFrame = CFrame.new(finalPos)
-            end
-        end)
-        task.wait(0.12)
-        local retry = false
-        pcall(function()
-            if typeof(fireproximityprompt) == "function" then
-                fireproximityprompt(prompt, 1)
-                retry = true
-                return
-            end
-        end)
-        if not retry then
-            pcall(function()
-                if prompt.InputHoldBegin and prompt.InputHoldEnd then
-                    prompt:InputHoldBegin()
-                    task.wait(1)
-                    prompt:InputHoldEnd()
-                    retry = true
-                    return
-                end
-            end)
-        end
-        if not retry then
-            pcall(function()
-                if prompt.Trigger then
-                    prompt:Trigger()
-                    retry = true
-                end
-            end)
-        end
-        return retry
     end
+
+    -- Move to final position and try again once more
+    pcall(function()
+        if hrp and hrp.CFrame then
+            local facing = hrp.CFrame.LookVector
+            hrp.CFrame = CFrame.new(finalPos, finalPos + facing)
+        else
+            hrp.CFrame = CFrame.new(finalPos)
+        end
+    end)
+    task.wait(0.12)
+    local okRetry = robustFirePrompt(prompt)
+    return okRetry
 end
 
 local function claimFirstAvailable()
