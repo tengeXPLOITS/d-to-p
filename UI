@@ -59,10 +59,11 @@ local window = new(outline, "Frame", {
     Name = "Window",
     AnchorPoint = Vector2.new(0.5,0.5),
     Position = UDim2.new(0.5,0,0.5,0),
-    Size = UDim2.new(0.97,0,0.98,0),
+    Size = UDim2.new(0.94,0,0.94,0),
     BackgroundColor3 = Color3.fromRGB(24,24,24),
     BorderSizePixel = 0,
 })
+outline.ImageTransparency = 0.25
 
 -- Title bar (green strip) used for drag
 local titleBar = new(window, "Frame", {
@@ -115,6 +116,7 @@ local tabs = {}
 tabs.booth = makeTabButton("Booth", tabRow)
 tabs.main = makeTabButton("Main", tabRow)
 tabs.server = makeTabButton("Server", tabRow)
+tabs.webhook = makeTabButton("Webhook", tabRow)
 
 -- Content area
 local content = new(window, "Frame", {
@@ -142,6 +144,7 @@ local frames = {
     Booth = makeContentFrame("Booth"),
     Main = makeContentFrame("Main"),
     Server = makeContentFrame("Server"),
+    Webhook = makeContentFrame("Webhook"),
 }
 
 frames.Booth.Visible = true
@@ -214,32 +217,15 @@ local function teleportToBoothAndClaim(model)
     local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
     local hrp = char:FindFirstChild("HumanoidRootPart")
     if not hrp then return false end
-    -- Determine anchor CFrame for booth orientation
-    local anchorCFrame = nil
-    local bboxCFrame, bboxSize
-    if model.PrimaryPart then
-        anchorCFrame = model.PrimaryPart.CFrame
-    else
-        -- try bounding box
-        local okbb, bbCFrame, bbSize = pcall(function() return model:GetBoundingBox() end)
-        if okbb and bbCFrame then
-            anchorCFrame = bbCFrame
-            bboxSize = bbSize
-        end
-    end
-    if not anchorCFrame then
-        anchorCFrame = claimedPart.CFrame
-    end
-
-    local front = anchorCFrame.LookVector
-    local distance = 3
-    -- place slightly in front of the booth (along front) and set Y to stand on ground near booth
-    local pos = anchorCFrame.Position + front * distance
-    local groundY = claimedPart.Position.Y + 2 -- reasonable standing height
-    pos = Vector3.new(pos.X, groundY, pos.Z)
+    -- Better booth placement: use claimedPart local frame to compute forward and place player slightly in front
+    local dist = 4
+    local localOffset = CFrame.new(0, 0, -dist)
+    local targetCFrame = claimedPart.CFrame * localOffset
+    local pos = Vector3.new(targetCFrame.Position.X, claimedPart.Position.Y + 2, targetCFrame.Position.Z)
     pcall(function()
-        -- face away from the booth (look opposite of front)
-        hrp.CFrame = CFrame.new(pos, pos - front)
+        -- face away from the booth: look towards targetCFrame.LookVector * -1
+        local lookAway = -claimedPart.CFrame.LookVector
+        hrp.CFrame = CFrame.new(pos, pos + lookAway)
     end)
     task.wait(0.2)
 
@@ -304,6 +290,15 @@ local function claimFirstAvailable()
     local ok = teleportToBoothAndClaim(b)
     if ok then
         warn("Claim attempt finished")
+        task.spawn(function()
+            for i=1,20 do
+                if type(sendWebhook) == "function" then
+                    pcall(sendWebhook, "Claimed a booth")
+                    break
+                end
+                task.wait(0.05)
+            end
+        end)
     else
         warn("Claim attempt failed")
     end
@@ -325,6 +320,7 @@ end
 tabs.booth.MouseButton1Click:Connect(function() selectTab("Booth") end)
 tabs.main.MouseButton1Click:Connect(function() selectTab("Main") end)
 tabs.server.MouseButton1Click:Connect(function() selectTab("Server") end)
+tabs.webhook.MouseButton1Click:Connect(function() selectTab("Webhook") end)
 
 -- Small Main and Server content placeholders
 -- Main tab: Anti AFK toggle
@@ -387,6 +383,33 @@ local serverHopBtn = addButton(frames.Server, "Server Hop Now", function()
     end)
 end)
 
+-- Webhook tab UI
+addLabel(frames.Webhook, "Webhook URL")
+local webhookBox = addTextBox(frames.Webhook, "https://discord.com/api/webhooks/...", function(v)
+    getgenv().webhookUrl = v
+end)
+webhookBox.Text = getgenv().webhookUrl or ""
+
+local webhookToggle, _ = addToggle(frames.Webhook, "Send webhook on claim", false, function(b)
+    getgenv().webhookEnabled = b
+end)
+
+local function sendWebhook(content)
+    if not getgenv().webhookEnabled or not getgenv().webhookUrl then return end
+    local payload = HttpService:JSONEncode({content = content})
+    pcall(function()
+        if httprequest then
+            httprequest({Url = getgenv().webhookUrl, Method = "POST", Headers = {["Content-Type"] = "application/json"}, Body = payload})
+        else
+            HttpService:PostAsync(getgenv().webhookUrl, payload, Enum.HttpContentType.ApplicationJson)
+        end
+    end)
+end
+
+local webhookTestBtn = addButton(frames.Webhook, "Send Test Webhook", function()
+    pcall(function() sendWebhook("Test from DonateToPlayers UI") end)
+end)
+
 -- Server hop core functions
 local function pickRandomCandidates(list, maxCount)
     local out = {}
@@ -406,43 +429,55 @@ function serverHopNow(immediate)
         warn("No executor http request available; server hop may fail")
         return
     end
-    -- Fetch server list using executor httprequest (like old.lua)
-    local ok, res = pcall(function()
-        return httprequest({Url = "https://games.roblox.com/v1/games/" .. placeId .. "/servers/Public?sortOrder=Desc&limit=100", Method = "GET"})
-    end)
-    if ok and res and res.Body then
-        local body = nil
-        pcall(function() body = HttpService:JSONDecode(res.Body) end)
-        if body and body.data then
-            for _, v in ipairs(body.data) do
-                if type(v) == "table" and v.id then
-                    table.insert(servers, 1, v.id)
+    -- Loop until we successfully teleport
+    while true do
+        local ok, res = pcall(function()
+            return httprequest({Url = "https://games.roblox.com/v1/games/" .. placeId .. "/servers/Public?sortOrder=Desc&limit=100", Method = "GET"})
+        end)
+        servers = {}
+        if ok and res and res.Body then
+            local body = nil
+            pcall(function() body = HttpService:JSONDecode(res.Body) end)
+            if body and body.data then
+                -- prefer servers with 21-22 players
+                local preferred = {}
+                local other = {}
+                for _, v in ipairs(body.data) do
+                    if type(v) == "table" and v.id and tonumber(v.playing) then
+                        if tonumber(v.playing) >= 21 and tonumber(v.playing) <= 22 then
+                            table.insert(preferred, v.id)
+                        else
+                            table.insert(other, v.id)
+                        end
+                    end
+                end
+                if #preferred > 0 then
+                    servers = preferred
+                else
+                    servers = other
                 end
             end
+        else
+            warn("Failed to fetch server list via executor HTTP")
         end
-    else
-        warn("Failed to fetch server list via executor HTTP")
+
+        if #servers == 0 then
+            task.wait(0.5)
+            continue
+        end
+
+        -- try teleport to random candidate, retry until success
+        local instanceId = servers[math.random(1, #servers)]
+        local ok2 = pcall(function()
+            TeleportService:TeleportToPlaceInstance(tonumber(placeId) or placeId, instanceId, LocalPlayer)
+        end)
+        if ok2 then
+            return
+        else
+            warn("Teleport attempt failed, retrying...")
+            task.wait(0.5)
+        end
     end
-
-    -- Spawn loop to attempt teleports repeatedly (matches old.lua behavior)
-    task.spawn(function()
-        while task.wait(0.5) do
-            if #servers > 0 then
-                pcall(function()
-                    TeleportService:TeleportToPlaceInstance(tonumber(placeId) or placeId, servers[math.random(1, #servers)], LocalPlayer)
-                end)
-            end
-        end
-    end)
-
-    -- Retry on teleport init failed
-    TeleportService.TeleportInitFailed:Connect(function()
-        if #servers > 0 then
-            pcall(function()
-                TeleportService:TeleportToPlaceInstance(tonumber(placeId) or placeId, servers[math.random(1, #servers)], LocalPlayer)
-            end)
-        end
-    end)
 end
 
 -- Auto-hop loop (checks SETTINGS.autoServerHop)
@@ -487,9 +522,11 @@ end)
 local function onResize()
     local screenSize = workspace.CurrentCamera.ViewportSize
     if screenSize.X < 700 then
-        window.Size = UDim2.new(0.9, 0, 0.8, 0)
+        outline.Size = UDim2.new(0.96, 0, 0.9, 0)
+        window.Size = UDim2.new(0.94, 0, 0.88, 0)
     else
-        window.Size = UDim2.new(0.35, 0, 0.55, 0)
+        outline.Size = UDim2.new(0.36, 0, 0.56, 0)
+        window.Size = UDim2.new(0.94, 0, 0.94, 0)
     end
 end
 RunService.Heartbeat:Connect(onResize)
