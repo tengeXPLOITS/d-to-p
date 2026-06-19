@@ -296,6 +296,7 @@ local function teleportToBoothAndClaim(model)
         end
     end)
     task.wait(0.12)
+
     -- compute final offset relative to anchorPart but DO NOT change player's facing direction
     local cp = anchorPart.CFrame
     local front = cp.LookVector
@@ -314,15 +315,6 @@ local function teleportToBoothAndClaim(model)
         finalPos = anchorPart.Position + front * dist
     end
     finalPos = Vector3.new(finalPos.X, anchorPart.Position.Y + 2, finalPos.Z)
-    pcall(function()
-        if hrp and hrp.CFrame then
-            local facing = hrp.CFrame.LookVector
-            hrp.CFrame = CFrame.new(finalPos, finalPos + facing)
-        else
-            hrp.CFrame = CFrame.new(finalPos)
-        end
-    end)
-    task.wait(0.12)
 
     -- Prefer the claimedPart -> Attachment -> ClaimPrompt pattern (most booths use this). Fall back to model scan.
     local prompt = nil
@@ -345,9 +337,20 @@ local function teleportToBoothAndClaim(model)
         end
     end
 
-    if not prompt then return false end
+    if not prompt then
+        -- move to final position even if we couldn't find the prompt
+        pcall(function()
+            if hrp and hrp.CFrame then
+                local facing = hrp.CFrame.LookVector
+                hrp.CFrame = CFrame.new(finalPos, finalPos + facing)
+            else
+                hrp.CFrame = CFrame.new(finalPos)
+            end
+        end)
+        return false
+    end
 
-    -- Attempt to trigger the prompt; prefer safe client methods
+    -- Attempt to trigger the prompt while at the claimedPart
     local success = false
     pcall(function()
         if typeof(fireproximityprompt) == "function" then
@@ -378,7 +381,58 @@ local function teleportToBoothAndClaim(model)
         end)
     end
 
-    return success
+    if success then
+        -- after successful claim, move the player to their preferred final position
+        task.wait(0.12)
+        pcall(function()
+            if hrp and hrp.CFrame then
+                local facing = hrp.CFrame.LookVector
+                hrp.CFrame = CFrame.new(finalPos, finalPos + facing)
+            else
+                hrp.CFrame = CFrame.new(finalPos)
+            end
+        end)
+        return true
+    else
+        -- if firing failed, move to finalPos and try once more
+        pcall(function()
+            if hrp and hrp.CFrame then
+                local facing = hrp.CFrame.LookVector
+                hrp.CFrame = CFrame.new(finalPos, finalPos + facing)
+            else
+                hrp.CFrame = CFrame.new(finalPos)
+            end
+        end)
+        task.wait(0.12)
+        local retry = false
+        pcall(function()
+            if typeof(fireproximityprompt) == "function" then
+                fireproximityprompt(prompt, 1)
+                retry = true
+                return
+            end
+        end)
+        if not retry then
+            pcall(function()
+                if prompt.InputHoldBegin and prompt.InputHoldEnd then
+                    prompt:InputHoldBegin()
+                    task.wait(1)
+                    prompt:InputHoldEnd()
+                    retry = true
+                    return
+                end
+            end)
+        end
+        if not retry then
+            pcall(function()
+                if prompt.Trigger then
+                    prompt:Trigger()
+                    retry = true
+                end
+            end)
+        end
+        return retry
+    end
 end
 
 local function claimFirstAvailable()
