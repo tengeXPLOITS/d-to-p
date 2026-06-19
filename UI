@@ -281,14 +281,34 @@ local function teleportToBoothAndClaim(model)
     local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
     local hrp = char:FindFirstChild("HumanoidRootPart")
     if not hrp then return false end
-    -- Teleport the player to a position in front of the claimedPart (do not force orientation)
+    -- Teleport the player to a position relative to the claimedPart and orient per SETTINGS.boothPosition
     local dist = 4
-    local cp = claimedPart.CFrame
-    -- place the player in front of the booth's base part (use -LookVector to move away from facing direction)
-    local pos = claimedPart.Position - cp.LookVector * dist
-    pos = Vector3.new(pos.X, claimedPart.Position.Y + 2, pos.Z)
+    local anchorPart = claimedPart or model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart")
+    if not anchorPart then return false end
+    local cp = anchorPart.CFrame
+    local front = cp.LookVector
+    local right = cp.RightVector
+    local choice = SETTINGS.boothPosition or "Front"
+    local pos, lookTarget
+    if choice == "Front" then
+        pos = anchorPart.Position + front * dist
+        lookTarget = pos + front -- face away from booth
+    elseif choice == "Behind" then
+        pos = anchorPart.Position - front * dist
+        lookTarget = anchorPart.Position -- look toward booth
+    elseif choice == "Left" then
+        pos = anchorPart.Position - right * dist
+        lookTarget = pos - right -- face outward to the left
+    elseif choice == "Right" then
+        pos = anchorPart.Position + right * dist
+        lookTarget = pos + right -- face outward to the right
+    else
+        pos = anchorPart.Position + front * dist
+        lookTarget = pos + front
+    end
+    pos = Vector3.new(pos.X, anchorPart.Position.Y + 2, pos.Z)
     pcall(function()
-        hrp.CFrame = CFrame.new(pos)
+        hrp.CFrame = CFrame.new(pos, lookTarget)
     end)
     task.wait(0.2)
 
