@@ -22,6 +22,7 @@ local SETTINGS = {
     autoServerHop = false,
     serverStayMinutes = 5,
     serverHopRange = 6, -- user-facing max 24
+    boothPosition = "Front",
     -- main
     antiAfk = false,
 }
@@ -41,29 +42,19 @@ end
 -- Build UI
 local screen = new(PlayerGui, "ScreenGui", {Name = "DonateToPlayersUI", ResetOnSpawn=false, IgnoreGuiInset=true})
 
--- Outline ImageLabel (squiggle outline) and inner window frame
-local outline = new(screen, "ImageLabel", {
-    Name = "WindowOutline",
+-- Window as ImageLabel with squiggle shape
+local window = new(screen, "ImageLabel", {
+    Name = "Window",
     AnchorPoint = Vector2.new(0.5,0.5),
     Position = UDim2.new(0.5, 0, 0.5, 0),
     Size = UDim2.new(0.36, 0, 0.56, 0),
-    BackgroundTransparency = 1,
+    BackgroundTransparency = 0,
     Image = "rbxassetid://2851929490",
-    ImageColor3 = Color3.fromRGB(40,40,40),
+    ImageColor3 = Color3.fromRGB(24,24,24),
     ScaleType = Enum.ScaleType.Slice,
     SliceCenter = Rect.new(12,12,12,12),
     BorderSizePixel = 0,
 })
-
-local window = new(outline, "Frame", {
-    Name = "Window",
-    AnchorPoint = Vector2.new(0.5,0.5),
-    Position = UDim2.new(0.5,0,0.5,0),
-    Size = UDim2.new(0.94,0,0.94,0),
-    BackgroundColor3 = Color3.fromRGB(24,24,24),
-    BorderSizePixel = 0,
-})
-outline.ImageTransparency = 0.25
 
 -- Title bar (green strip) used for drag
 local titleBar = new(window, "Frame", {
@@ -121,8 +112,8 @@ tabs.webhook = makeTabButton("Webhook", tabRow)
 -- Content area
 local content = new(window, "Frame", {
     Name = "Content",
-    Position = UDim2.new(0,8,0,88),
-    Size = UDim2.new(1,-16,1,-96),
+    Position = UDim2.new(0,8,0,64),
+    Size = UDim2.new(1,-16,1,-76),
     BackgroundTransparency = 1,
 })
 
@@ -189,7 +180,44 @@ local function addToggle(parent, labelText, initial, callback)
     return obj, container
 end
 
+-- radio group for choosing one of several options
+local function addRadioGroup(parent, options, initial, callback)
+    local container = new(parent, "Frame", {Size = UDim2.new(0.9,0,0,40), BackgroundTransparency = 1})
+    local layout = new(container, "UIListLayout", {})
+    layout.FillDirection = Enum.FillDirection.Horizontal
+    layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+    layout.SortOrder = Enum.SortOrder.LayoutOrder
+    layout.Padding = UDim.new(0,8)
+    local buttons = {}
+    local selected = initial
+    for i, opt in ipairs(options) do
+        local btn = new(container, "TextButton", {Text = opt, Size = UDim2.new(0, 80, 0, 32), BackgroundColor3 = Color3.fromRGB(60,60,60), TextColor3 = Color3.new(1,1,1), Font = Enum.Font.Gotham, TextSize = 14})
+        btn.AutoButtonColor = true
+        buttons[opt] = btn
+        btn.MouseButton1Click:Connect(function()
+            selected = opt
+            for k, b in pairs(buttons) do
+                b.BackgroundColor3 = (k == selected) and Color3.fromRGB(34,139,34) or Color3.fromRGB(60,60,60)
+            end
+            pcall(callback, selected)
+        end)
+    end
+    -- initialize visuals
+    for k, b in pairs(buttons) do
+        b.BackgroundColor3 = (k == initial) and Color3.fromRGB(34,139,34) or Color3.fromRGB(60,60,60)
+    end
+    return function() return selected end, container
+end
+
 -- Booth tab controls: simplified per user request (removed text update, dance, and delay controls)
+addLabel(frames.Booth, "Booth Position")
+local getBoothPos, _ = addRadioGroup(frames.Booth, {"Front","Behind","Left","Right"}, SETTINGS.boothPosition, function(sel)
+    SETTINGS.boothPosition = sel
+end)
+
+local claimNowBtn = addButton(frames.Booth, "Claim Now", function()
+    task.spawn(function() pcall(claimFirstAvailable) end)
+end)
 
 -- (Removed goal, text color, and custom text fields per user request)
 
@@ -217,15 +245,33 @@ local function teleportToBoothAndClaim(model)
     local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
     local hrp = char:FindFirstChild("HumanoidRootPart")
     if not hrp then return false end
-    -- Better booth placement: use claimedPart local frame to compute forward and place player slightly in front
+    -- Booth placement based on selected position: Front/Behind/Left/Right
     local dist = 4
-    local localOffset = CFrame.new(0, 0, -dist)
-    local targetCFrame = claimedPart.CFrame * localOffset
-    local pos = Vector3.new(targetCFrame.Position.X, claimedPart.Position.Y + 2, targetCFrame.Position.Z)
+    local cp = claimedPart.CFrame
+    local front = cp.LookVector
+    local right = cp.RightVector
+    local pos
+    local lookTarget
+    local choice = SETTINGS.boothPosition or "Front"
+    if choice == "Front" then
+        pos = claimedPart.Position + front * dist
+        lookTarget = pos + front -- face away from booth
+    elseif choice == "Behind" then
+        pos = claimedPart.Position - front * dist
+        lookTarget = claimedPart.Position -- look toward booth (presentable when behind)
+    elseif choice == "Left" then
+        pos = claimedPart.Position - right * dist
+        lookTarget = pos - right -- face away from booth (to the left)
+    elseif choice == "Right" then
+        pos = claimedPart.Position + right * dist
+        lookTarget = pos + right -- face away from booth (to the right)
+    else
+        pos = claimedPart.Position + front * dist
+        lookTarget = pos + front
+    end
+    pos = Vector3.new(pos.X, claimedPart.Position.Y + 2, pos.Z)
     pcall(function()
-        -- face away from the booth: look towards targetCFrame.LookVector * -1
-        local lookAway = -claimedPart.CFrame.LookVector
-        hrp.CFrame = CFrame.new(pos, pos + lookAway)
+        hrp.CFrame = CFrame.new(pos, lookTarget)
     end)
     task.wait(0.2)
 
@@ -439,13 +485,18 @@ function serverHopNow(immediate)
             local body = nil
             pcall(function() body = HttpService:JSONDecode(res.Body) end)
             if body and body.data then
-                -- prefer servers with 21-22 players
+                -- prefer servers with 21-22 players, else prefer servers with open slots, else any
                 local preferred = {}
+                local available = {}
                 local other = {}
                 for _, v in ipairs(body.data) do
-                    if type(v) == "table" and v.id and tonumber(v.playing) then
-                        if tonumber(v.playing) >= 21 and tonumber(v.playing) <= 22 then
+                    if type(v) == "table" and v.id then
+                        local playing = tonumber(v.playing)
+                        local maxP = tonumber(v.maxPlayers)
+                        if playing and playing >= 21 and playing <= 22 then
                             table.insert(preferred, v.id)
+                        elseif playing and maxP and playing < maxP then
+                            table.insert(available, v.id)
                         else
                             table.insert(other, v.id)
                         end
@@ -453,6 +504,8 @@ function serverHopNow(immediate)
                 end
                 if #preferred > 0 then
                     servers = preferred
+                elseif #available > 0 then
+                    servers = available
                 else
                     servers = other
                 end
@@ -522,11 +575,9 @@ end)
 local function onResize()
     local screenSize = workspace.CurrentCamera.ViewportSize
     if screenSize.X < 700 then
-        outline.Size = UDim2.new(0.96, 0, 0.9, 0)
-        window.Size = UDim2.new(0.94, 0, 0.88, 0)
+        window.Size = UDim2.new(0.96, 0, 0.9, 0)
     else
-        outline.Size = UDim2.new(0.36, 0, 0.56, 0)
-        window.Size = UDim2.new(0.94, 0, 0.94, 0)
+        window.Size = UDim2.new(0.36, 0, 0.56, 0)
     end
 end
 RunService.Heartbeat:Connect(onResize)
