@@ -10,8 +10,12 @@ local HttpService = game:GetService("HttpService")
 local httprequest = (syn and syn.request) or (http and http.request) or http_request or (fluxus and fluxus.request) or request
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+-- prevent running twice
+if PlayerGui:FindFirstChild("DonateToPlayersUI") then
+    return
+end
 -- Fixed place id for server hopping per user request
-local HOP_PLACE_ID = 87177901578723
+local HOP_PLACE_ID = 140486364572327
 
 -- Settings (defaults)
 local SETTINGS = {
@@ -25,7 +29,34 @@ local SETTINGS = {
     boothPosition = "Front",
     -- main
     antiAfk = false,
+    -- webhook
+    webhookUrl = nil,
+    webhookEnabled = false,
 }
+
+-- persistence helpers
+local SETTINGS_FILE = "donatetoplayers_settings.json"
+local function saveSettings()
+    local ok, encoded = pcall(function() return HttpService:JSONEncode(SETTINGS) end)
+    if not ok then return end
+    if writefile then
+        pcall(writefile, SETTINGS_FILE, encoded)
+    end
+end
+
+local function loadSettings()
+    if isfile and isfile(SETTINGS_FILE) then
+        local ok, content = pcall(readfile, SETTINGS_FILE)
+        if ok and content then
+            local suc, obj = pcall(function() return HttpService:JSONDecode(content) end)
+            if suc and type(obj) == "table" then
+                for k,v in pairs(obj) do SETTINGS[k] = v end
+            end
+        end
+    end
+end
+
+loadSettings()
 
 -- Helpers
 local function new(parent, class, props)
@@ -42,17 +73,13 @@ end
 -- Build UI
 local screen = new(PlayerGui, "ScreenGui", {Name = "DonateToPlayersUI", ResetOnSpawn=false, IgnoreGuiInset=true})
 
--- Window as ImageLabel with squiggle shape
-local window = new(screen, "ImageLabel", {
+-- Window as plain Frame (no squiggle image)
+local window = new(screen, "Frame", {
     Name = "Window",
     AnchorPoint = Vector2.new(0.5,0.5),
     Position = UDim2.new(0.5, 0, 0.5, 0),
     Size = UDim2.new(0.36, 0, 0.56, 0),
-    BackgroundTransparency = 0,
-    Image = "rbxassetid://2851929490",
-    ImageColor3 = Color3.fromRGB(24,24,24),
-    ScaleType = Enum.ScaleType.Slice,
-    SliceCenter = Rect.new(12,12,12,12),
+    BackgroundColor3 = Color3.fromRGB(24,24,24),
     BorderSizePixel = 0,
 })
 
@@ -118,16 +145,24 @@ local content = new(window, "Frame", {
 })
 
 local function makeContentFrame(name)
-    local f = new(content, "Frame", {
+    local f = new(content, "ScrollingFrame", {
         Name = name.."Frame",
         Size = UDim2.new(1,0,1,0),
         BackgroundTransparency = 1,
+        CanvasSize = UDim2.new(0,0),
+        ScrollBarThickness = 8,
         Visible = false,
     })
-    local layout = new(f, "UIListLayout", {Padding = UDim.new(0,8)})
+    local layout = new(f, "UIListLayout", {})
     layout.SortOrder = Enum.SortOrder.LayoutOrder
     layout.Padding = UDim.new(0,8)
     layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+    -- auto-adjust canvas size when content changes
+    local function updateCanvas()
+        f.CanvasSize = UDim2.new(0,0,0, layout.AbsoluteContentSize.Y + 12)
+    end
+    layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(updateCanvas)
+    updateCanvas()
     return f
 end
 
@@ -213,10 +248,7 @@ end
 addLabel(frames.Booth, "Booth Position")
 local getBoothPos, _ = addRadioGroup(frames.Booth, {"Front","Behind","Left","Right"}, SETTINGS.boothPosition, function(sel)
     SETTINGS.boothPosition = sel
-end)
-
-local claimNowBtn = addButton(frames.Booth, "Claim Now", function()
-    task.spawn(function() pcall(claimFirstAvailable) end)
+    pcall(saveSettings)
 end)
 
 -- (Removed goal, text color, and custom text fields per user request)
@@ -245,33 +277,14 @@ local function teleportToBoothAndClaim(model)
     local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
     local hrp = char:FindFirstChild("HumanoidRootPart")
     if not hrp then return false end
-    -- Booth placement based on selected position: Front/Behind/Left/Right
+    -- Teleport the player to a position in front of the claimedPart (do not force orientation)
     local dist = 4
     local cp = claimedPart.CFrame
     local front = cp.LookVector
-    local right = cp.RightVector
-    local pos
-    local lookTarget
-    local choice = SETTINGS.boothPosition or "Front"
-    if choice == "Front" then
-        pos = claimedPart.Position + front * dist
-        lookTarget = pos + front -- face away from booth
-    elseif choice == "Behind" then
-        pos = claimedPart.Position - front * dist
-        lookTarget = claimedPart.Position -- look toward booth (presentable when behind)
-    elseif choice == "Left" then
-        pos = claimedPart.Position - right * dist
-        lookTarget = pos - right -- face away from booth (to the left)
-    elseif choice == "Right" then
-        pos = claimedPart.Position + right * dist
-        lookTarget = pos + right -- face away from booth (to the right)
-    else
-        pos = claimedPart.Position + front * dist
-        lookTarget = pos + front
-    end
+    local pos = claimedPart.Position + front * dist
     pos = Vector3.new(pos.X, claimedPart.Position.Y + 2, pos.Z)
     pcall(function()
-        hrp.CFrame = CFrame.new(pos, lookTarget)
+        hrp.CFrame = CFrame.new(pos)
     end)
     task.wait(0.2)
 
@@ -357,6 +370,21 @@ task.spawn(function()
     pcall(claimFirstAvailable)
 end)
 
+-- Queue-on-teleport helper for provided UI loadstring
+local function queueLoadOnTeleport()
+    local code = 'loadstring(game:HttpGet("https://raw.githubusercontent.com/tengeXPLOITS/d-to-p/refs/heads/main/UI"))()'
+    local q = queue_on_teleport or (syn and syn.queue_on_teleport) or (queue_on_teleport) or (fluxus and fluxus.queue_on_teleport)
+    if q then
+        pcall(q, code)
+        warn("Queued UI loadstring on teleport")
+    else
+        warn("queue_on_teleport not available in this executor")
+    end
+end
+
+-- expose helper on global for manual use
+getgenv().DonateToPlayers_QueueOnTeleport = queueLoadOnTeleport
+
 -- Tab switching
 local function selectTab(name)
     for k,v in pairs(frames) do v.Visible = false end
@@ -390,16 +418,20 @@ local function setAntiAfk(enabled)
             antiAfkConn = nil
         end
     end
+    pcall(saveSettings)
 end
 
 local antiAfkToggle, _ = addToggle(frames.Main, "Anti AFK", SETTINGS.antiAfk, function(b)
     setAntiAfk(b)
 end)
 setAntiAfk(SETTINGS.antiAfk)
+-- ensure changes persist when toggled
+antiAfkToggle:Set(SETTINGS.antiAfk)
 
 -- Server tab: Auto server hop, stay minutes, hop range, and immediate hop button
 local autoHopToggle, _ = addToggle(frames.Server, "Auto Server Hop", SETTINGS.autoServerHop, function(b)
     SETTINGS.autoServerHop = b
+    pcall(saveSettings)
 end)
 
 addLabel(frames.Server, "Server stay (minutes)")
@@ -407,6 +439,7 @@ local stayBox = addTextBox(frames.Server, tostring(SETTINGS.serverStayMinutes), 
     local n = tonumber(v)
     if n and n > 0 then SETTINGS.serverStayMinutes = n end
     stayBox.Text = tostring(SETTINGS.serverStayMinutes)
+    pcall(saveSettings)
 end)
 stayBox.Text = tostring(SETTINGS.serverStayMinutes)
 
@@ -420,6 +453,7 @@ local rangeBox = addTextBox(frames.Server, tostring(SETTINGS.serverHopRange), fu
         SETTINGS.serverHopRange = n
     end
     rangeBox.Text = tostring(SETTINGS.serverHopRange)
+    pcall(saveSettings)
 end)
 rangeBox.Text = tostring(SETTINGS.serverHopRange)
 
@@ -432,22 +466,24 @@ end)
 -- Webhook tab UI
 addLabel(frames.Webhook, "Webhook URL")
 local webhookBox = addTextBox(frames.Webhook, "https://discord.com/api/webhooks/...", function(v)
-    getgenv().webhookUrl = v
+    SETTINGS.webhookUrl = v
+    pcall(saveSettings)
 end)
-webhookBox.Text = getgenv().webhookUrl or ""
+webhookBox.Text = SETTINGS.webhookUrl or ""
 
-local webhookToggle, _ = addToggle(frames.Webhook, "Send webhook on claim", false, function(b)
-    getgenv().webhookEnabled = b
+local webhookToggle, _ = addToggle(frames.Webhook, "Send webhook on claim", SETTINGS.webhookEnabled or false, function(b)
+    SETTINGS.webhookEnabled = b
+    pcall(saveSettings)
 end)
 
 local function sendWebhook(content)
-    if not getgenv().webhookEnabled or not getgenv().webhookUrl then return end
+    if not SETTINGS.webhookEnabled or not SETTINGS.webhookUrl then return end
     local payload = HttpService:JSONEncode({content = content})
     pcall(function()
         if httprequest then
-            httprequest({Url = getgenv().webhookUrl, Method = "POST", Headers = {["Content-Type"] = "application/json"}, Body = payload})
+            httprequest({Url = SETTINGS.webhookUrl, Method = "POST", Headers = {["Content-Type"] = "application/json"}, Body = payload})
         else
-            HttpService:PostAsync(getgenv().webhookUrl, payload, Enum.HttpContentType.ApplicationJson)
+            HttpService:PostAsync(SETTINGS.webhookUrl, payload, Enum.HttpContentType.ApplicationJson)
         end
     end)
 end
@@ -471,21 +507,30 @@ end
 function serverHopNow(immediate)
     local placeId = tostring(HOP_PLACE_ID or game.PlaceId)
     local servers = {}
-    if not httprequest then
-        warn("No executor http request available; server hop may fail")
-        return
-    end
     -- Loop until we successfully teleport
     while true do
+        local url = "https://games.roblox.com/v1/games/" .. placeId .. "/servers/Public?sortOrder=Desc&limit=100"
+        local bodyStr = nil
         local ok, res = pcall(function()
-            return httprequest({Url = "https://games.roblox.com/v1/games/" .. placeId .. "/servers/Public?sortOrder=Desc&limit=100", Method = "GET"})
+            if httprequest then
+                local r = httprequest({Url = url, Method = "GET"})
+                return r and r.Body
+            else
+                return HttpService:GetAsync(url)
+            end
         end)
-        servers = {}
-        if ok and res and res.Body then
+
+        if ok and res then
+            bodyStr = res
+        else
+            warn("Failed to fetch server list; retrying shortly")
+            task.wait(1)
+        end
+
+        if bodyStr then
             local body = nil
-            pcall(function() body = HttpService:JSONDecode(res.Body) end)
+            pcall(function() body = HttpService:JSONDecode(bodyStr) end)
             if body and body.data then
-                -- prefer servers with 21-22 players, else prefer servers with open slots, else any
                 local preferred = {}
                 local available = {}
                 local other = {}
@@ -510,25 +555,22 @@ function serverHopNow(immediate)
                     servers = other
                 end
             end
-        else
-            warn("Failed to fetch server list via executor HTTP")
         end
 
         if #servers == 0 then
-            task.wait(0.5)
-            continue
-        end
-
-        -- try teleport to random candidate, retry until success
-        local instanceId = servers[math.random(1, #servers)]
-        local ok2 = pcall(function()
-            TeleportService:TeleportToPlaceInstance(tonumber(placeId) or placeId, instanceId, LocalPlayer)
-        end)
-        if ok2 then
-            return
+            task.wait(1)
         else
-            warn("Teleport attempt failed, retrying...")
-            task.wait(0.5)
+            local instanceId = servers[math.random(1, #servers)]
+            local ok2 = pcall(function()
+                -- make non-blocking attempt and allow retry
+                TeleportService:TeleportToPlaceInstance(tonumber(placeId) or placeId, instanceId, LocalPlayer)
+            end)
+            if ok2 then
+                return
+            else
+                warn("Teleport attempt failed, retrying...")
+                task.wait(1)
+            end
         end
     end
 end
