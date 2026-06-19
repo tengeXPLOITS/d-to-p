@@ -281,46 +281,63 @@ local function teleportToBoothAndClaim(model)
     local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
     local hrp = char:FindFirstChild("HumanoidRootPart")
     if not hrp then return false end
-    -- Teleport the player to a position relative to the claimedPart and orient per SETTINGS.boothPosition
+    -- Safer claiming: first teleport to the ClaimedPart itself so the prompt is within range,
+    -- then step to the user's preferred offset without forcing rotation (preserve facing).
     local dist = 4
     local anchorPart = claimedPart or model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart")
     if not anchorPart then return false end
+    local initialPos = Vector3.new(anchorPart.Position.X, anchorPart.Position.Y + 2, anchorPart.Position.Z)
+    pcall(function()
+        if hrp and hrp.CFrame then
+            local facing = hrp.CFrame.LookVector
+            hrp.CFrame = CFrame.new(initialPos, initialPos + facing)
+        else
+            hrp.CFrame = CFrame.new(initialPos)
+        end
+    end)
+    task.wait(0.12)
+    -- compute final offset relative to anchorPart but DO NOT change player's facing direction
     local cp = anchorPart.CFrame
     local front = cp.LookVector
     local right = cp.RightVector
     local choice = SETTINGS.boothPosition or "Front"
-    local pos, lookTarget
+    local finalPos
     if choice == "Front" then
-        pos = anchorPart.Position + front * dist
-        lookTarget = pos + front -- face away from booth
+        finalPos = anchorPart.Position + front * dist
     elseif choice == "Behind" then
-        pos = anchorPart.Position - front * dist
-        lookTarget = anchorPart.Position -- look toward booth
+        finalPos = anchorPart.Position - front * dist
     elseif choice == "Left" then
-        pos = anchorPart.Position - right * dist
-        lookTarget = pos - right -- face outward to the left
+        finalPos = anchorPart.Position - right * dist
     elseif choice == "Right" then
-        pos = anchorPart.Position + right * dist
-        lookTarget = pos + right -- face outward to the right
+        finalPos = anchorPart.Position + right * dist
     else
-        pos = anchorPart.Position + front * dist
-        lookTarget = pos + front
+        finalPos = anchorPart.Position + front * dist
     end
-    pos = Vector3.new(pos.X, anchorPart.Position.Y + 2, pos.Z)
+    finalPos = Vector3.new(finalPos.X, anchorPart.Position.Y + 2, finalPos.Z)
     pcall(function()
-        hrp.CFrame = CFrame.new(pos, lookTarget)
-    end)
-    task.wait(0.2)
-
-    -- try to find ProximityPrompt anywhere in the booth model
-    local prompt = nil
-    for _, inst in ipairs(model:GetDescendants()) do
-        if inst:IsA("ProximityPrompt") then
-            prompt = inst
-            break
+        if hrp and hrp.CFrame then
+            local facing = hrp.CFrame.LookVector
+            hrp.CFrame = CFrame.new(finalPos, finalPos + facing)
+        else
+            hrp.CFrame = CFrame.new(finalPos)
         end
-        if inst.Name == "ClaimPrompt" and inst:IsA("Instance") and inst.Parent then
-            -- if it's not a ProximityPrompt instance, skip
+    end)
+    task.wait(0.12)
+
+    -- Prefer the claimedPart -> Attachment -> ClaimPrompt pattern (most booths use this). Fall back to model scan.
+    local prompt = nil
+    for _, att in ipairs(claimedPart:GetDescendants()) do
+        if att:IsA("Attachment") then
+            local p = att:FindFirstChild("ClaimPrompt") or att:FindFirstChildWhichIsA("ProximityPrompt")
+            if p and p:IsA("ProximityPrompt") then
+                prompt = p
+                break
+            end
+        end
+    end
+    if not prompt then
+        -- fallback: scan whole model
+        for _, inst in ipairs(model:GetDescendants()) do
             if inst:IsA("ProximityPrompt") then
                 prompt = inst
                 break
@@ -586,6 +603,8 @@ function serverHopNow(immediate)
         else
             local instanceId = servers[math.random(1, #servers)]
             local ok2 = pcall(function()
+                -- queue the UI to load on teleport (if executor supports it)
+                pcall(queueLoadOnTeleport)
                 -- make non-blocking attempt and allow retry
                 TeleportService:TeleportToPlaceInstance(tonumber(placeId) or placeId, instanceId, LocalPlayer)
             end)
