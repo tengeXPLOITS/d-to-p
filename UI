@@ -274,30 +274,94 @@ end
 
 local function teleportToBoothAndClaim(model)
     if not model then return false end
-    -- Find ClaimedPart
+
     local claimedPart = model:FindFirstChild("ClaimedPart") or model:FindFirstChildWhichIsA("BasePart")
     if not claimedPart then return false end
-    -- Move player close to claimedPart
+
     local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
     local hrp = char:FindFirstChild("HumanoidRootPart")
     if not hrp then return false end
-    -- Safer claiming: first teleport to the ClaimedPart itself so the prompt is within range,
-    -- then step to the user's preferred offset without forcing rotation (preserve facing).
-    local dist = 4
+
     local anchorPart = claimedPart or model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart")
     if not anchorPart then return false end
+
+    local function setPlayerPosition(pos, lookAt)
+        pcall(function()
+            local human = char:FindFirstChildOfClass("Humanoid")
+            if human then
+                human.Sit = false
+            end
+            if hrp and hrp.CFrame then
+                if lookAt then
+                    hrp.CFrame = CFrame.new(pos, lookAt)
+                else
+                    hrp.CFrame = CFrame.new(pos)
+                end
+            end
+        end)
+    end
+
     local initialPos = Vector3.new(anchorPart.Position.X, anchorPart.Position.Y + 2, anchorPart.Position.Z)
-    pcall(function()
-        if hrp and hrp.CFrame then
-            local facing = hrp.CFrame.LookVector
-            hrp.CFrame = CFrame.new(initialPos, initialPos + facing)
-        else
-            hrp.CFrame = CFrame.new(initialPos)
-        end
-    end)
+    local initialLook = (hrp.CFrame and hrp.CFrame.LookVector) or Vector3.new(0, 0, -1)
+    setPlayerPosition(initialPos, initialPos + initialLook)
     task.wait(0.12)
 
-    -- compute final offset relative to anchorPart but DO NOT change player's facing direction
+    local function getClaimPromptCandidates()
+        local prompts = {}
+        local seen = {}
+        local function add(promptObj)
+            if promptObj and promptObj:IsA("ProximityPrompt") and not seen[promptObj] then
+                prompts[#prompts + 1] = promptObj
+                seen[promptObj] = true
+            end
+        end
+
+        for _, att in ipairs(claimedPart:GetDescendants()) do
+            if att:IsA("Attachment") then
+                local p = att:FindFirstChild("ClaimPrompt") or att:FindFirstChildWhichIsA("ProximityPrompt")
+                if p then
+                    add(p)
+                end
+            end
+        end
+
+        for _, inst in ipairs(model:GetDescendants()) do
+            if inst:IsA("ProximityPrompt") then
+                add(inst)
+            end
+        end
+
+        if #prompts == 0 then
+            for _, inst in ipairs(workspace:GetDescendants()) do
+                if inst:IsA("ProximityPrompt") then
+                    local action = string.lower(inst.ActionText or "")
+                    local object = string.lower(inst.ObjectText or "")
+                    if action == "claim" or object == "claim" or string.find(action, "claim", 1, true) or string.find(object, "claim", 1, true) then
+                        local parentPart = inst.Parent and inst.Parent:IsA("BasePart") and inst.Parent or nil
+                        if parentPart then
+                            local dist = (parentPart.Position - anchorPart.Position).Magnitude
+                            if dist < 80 then
+                                add(inst)
+                            end
+                        end
+                    end
+                end
+            end
+        end
+
+        return prompts
+    end
+
+    local promptCandidates = getClaimPromptCandidates()
+    local prompt = nil
+    for _, candidate in ipairs(promptCandidates) do
+        if candidate and candidate.Enabled ~= false then
+            prompt = candidate
+            break
+        end
+    end
+
+    local dist = 4
     local cp = anchorPart.CFrame
     local front = cp.LookVector
     local right = cp.RightVector
@@ -316,154 +380,116 @@ local function teleportToBoothAndClaim(model)
     end
     finalPos = Vector3.new(finalPos.X, anchorPart.Position.Y + 2, finalPos.Z)
 
-    -- Prefer the claimedPart -> Attachment -> ClaimPrompt pattern (most booths use this). Fall back to model scan.
-    local prompt = nil
-    for _, att in ipairs(claimedPart:GetDescendants()) do
-        if att:IsA("Attachment") then
-            local p = att:FindFirstChild("ClaimPrompt") or att:FindFirstChildWhichIsA("ProximityPrompt")
-            if p and p:IsA("ProximityPrompt") then
-                prompt = p
-                break
-            end
-        end
-    end
-    if not prompt then
-        -- fallback: scan whole model
-        for _, inst in ipairs(model:GetDescendants()) do
-            if inst:IsA("ProximityPrompt") then
-                prompt = inst
-                break
-            end
-        end
-    end
-    if not prompt then
-        -- move to final position even if we couldn't find the prompt
-        pcall(function()
-            if hrp and hrp.CFrame then
-                local facing = hrp.CFrame.LookVector
-                hrp.CFrame = CFrame.new(finalPos, finalPos + facing)
-            else
-                hrp.CFrame = CFrame.new(finalPos)
-            end
-        end)
-        return false
-    end
-
-    -- Robust prompt firing helper: try multiple nearby positions and several trigger methods.
     local function robustFirePrompt(promptObj)
-        local basePos
-        if promptObj.Parent and promptObj.Parent:IsA("BasePart") then
-            basePos = promptObj.Parent.Position
-        else
-            basePos = anchorPart.Position
+        if not promptObj then
+            return false
         end
-        local cp = anchorPart.CFrame
-        local front = cp.LookVector
-        local right = cp.RightVector
+        if promptObj.Enabled == false then
+            pcall(function()
+                promptObj.Enabled = true
+            end)
+        end
+
+        local basePart = promptObj.Parent and promptObj.Parent:IsA("BasePart") and promptObj.Parent or anchorPart
+        local baseCFrame = basePart.CFrame
+        local frontDir = baseCFrame.LookVector
+        local rightDir = baseCFrame.RightVector
+
         local offsets = {
-            Vector3.new(0,0,0),
-            front * 0.5,
-            front * 1,
-            -front * 0.5,
-            right * 0.6,
-            -right * 0.6,
-            Vector3.new(0,0.8,0),
-            Vector3.new(0,-0.5,0),
+            Vector3.new(0, 0, 0),
+            frontDir * 0.5,
+            frontDir * 1.2,
+            -frontDir * 0.6,
+            rightDir * 0.6,
+            -rightDir * 0.6,
+            Vector3.new(0, 0.8, 0),
+            Vector3.new(0, -0.5, 0),
+        }
+
+        local directions = {
+            Vector3.new(0, 0, -1),
+            frontDir,
+            -frontDir,
+            rightDir,
+            -rightDir,
         }
 
         for _, off in ipairs(offsets) do
-            local tryPos = basePos + off
-            tryPos = Vector3.new(tryPos.X, basePos.Y + 2, tryPos.Z)
-            pcall(function()
-                local facing = hrp and hrp.CFrame and hrp.CFrame.LookVector
-                if facing then
-                    hrp.CFrame = CFrame.new(tryPos, tryPos + facing)
-                else
-                    hrp.CFrame = CFrame.new(tryPos)
-                end
-            end)
-            task.wait(0.08)
+            local basePos = basePart.Position + off
+            for _, dir in ipairs(directions) do
+                local tryPos = Vector3.new(basePos.X, basePos.Y + 2, basePos.Z)
+                local lookAt = tryPos + dir
+                setPlayerPosition(tryPos, lookAt)
+                task.wait(0.05)
 
-            -- Try exploit helper first
-            local fired = false
-            pcall(function()
-                if typeof(fireproximityprompt) == "function" then
-                    fireproximityprompt(promptObj, 1)
-                    fired = true
-                end
-            end)
-            if fired then return true end
+                local fired = false
+                pcall(function()
+                    if typeof(fireproximityprompt) == "function" then
+                        fireproximityprompt(promptObj, 1)
+                        fired = true
+                    end
+                end)
+                if fired then return true end
 
-            -- Try InputHold (for hold-required prompts)
-            pcall(function()
-                if promptObj.InputHoldBegin and promptObj.InputHoldEnd then
-                    promptObj:InputHoldBegin()
-                    task.wait(1)
-                    promptObj:InputHoldEnd()
-                    fired = true
-                end
-            end)
-            if fired then return true end
+                pcall(function()
+                    if promptObj.Trigger and promptObj.Enabled ~= false then
+                        promptObj:Trigger()
+                        fired = true
+                    end
+                end)
+                if fired then return true end
 
-            -- Try Trigger
-            pcall(function()
-                if promptObj.Trigger then
-                    promptObj:Trigger()
-                    fired = true
-                end
-            end)
-            if fired then return true end
+                pcall(function()
+                    if promptObj.InputHoldBegin and promptObj.InputHoldEnd and promptObj.Enabled ~= false then
+                        promptObj:InputHoldBegin()
+                        task.wait(0.1)
+                        promptObj:InputHoldEnd()
+                        fired = true
+                    end
+                end)
+                if fired then return true end
 
-            -- Try touch emulation if a basepart is available and exploit exposes firetouchinterest
-            pcall(function()
-                local part = (promptObj.Parent and promptObj.Parent:IsA("BasePart")) and promptObj.Parent or nil
-                if part and firetouchinterest then
-                    -- try both argument orders to be safe across exploits
-                    pcall(function()
-                        firetouchinterest(part, hrp, 0)
-                        task.wait(0.05)
-                        firetouchinterest(part, hrp, 1)
-                    end)
-                    pcall(function()
-                        firetouchinterest(hrp, part, 0)
-                        task.wait(0.05)
-                        firetouchinterest(hrp, part, 1)
-                    end)
-                    fired = true
-                end
-            end)
-            if fired then return true end
+                pcall(function()
+                    local part = promptObj.Parent and promptObj.Parent:IsA("BasePart") and promptObj.Parent or nil
+                    if part and firetouchinterest then
+                        pcall(function()
+                            firetouchinterest(part, hrp, 0)
+                            task.wait(0.05)
+                            firetouchinterest(part, hrp, 1)
+                        end)
+                        pcall(function()
+                            firetouchinterest(hrp, part, 0)
+                            task.wait(0.05)
+                            firetouchinterest(hrp, part, 1)
+                        end)
+                        fired = true
+                    end
+                end)
+                if fired then return true end
+            end
         end
+
         return false
     end
 
-    -- First attempt while standing at the claimedPart region
-    local okFire = robustFirePrompt(prompt)
+    local okFire = false
+    if prompt then
+        okFire = robustFirePrompt(prompt)
+    end
+
     if okFire then
-        task.wait(0.12)
-        pcall(function()
-            if hrp and hrp.CFrame then
-                local facing = hrp.CFrame.LookVector
-                hrp.CFrame = CFrame.new(finalPos, finalPos + facing)
-            else
-                hrp.CFrame = CFrame.new(finalPos)
-            end
-        end)
+        setPlayerPosition(finalPos, finalPos + ((hrp.CFrame and hrp.CFrame.LookVector) or Vector3.new(0, 0, -1)))
         return true
     end
 
-    -- Move to final position and try again once more
-    pcall(function()
-        if hrp and hrp.CFrame then
-            local facing = hrp.CFrame.LookVector
-            hrp.CFrame = CFrame.new(finalPos, finalPos + facing)
-        else
-            hrp.CFrame = CFrame.new(finalPos)
-        end
-    end)
+    setPlayerPosition(finalPos, finalPos + ((hrp.CFrame and hrp.CFrame.LookVector) or Vector3.new(0, 0, -1)))
     task.wait(0.12)
-    local okRetry = robustFirePrompt(prompt)
-    return okRetry
+
+    if prompt then
+        okFire = robustFirePrompt(prompt)
+    end
+
+    return okFire
 end
 
 local function claimFirstAvailable()
