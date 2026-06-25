@@ -492,26 +492,65 @@ local function teleportToBoothAndClaim(model)
     return okFire
 end
 
+local serverMonitorLabel = nil
+
+local function updateServerMonitor(count)
+    if serverMonitorLabel then
+        serverMonitorLabel.Text = "Available servers: " .. tostring(count or 0)
+    end
+end
+
+local function refreshServerMonitor()
+    task.spawn(function()
+        local placeId = tostring(HOP_PLACE_ID or game.PlaceId)
+        local url = "https://games.roblox.com/v1/games/" .. placeId .. "/servers/Public?sortOrder=Desc&limit=100"
+        local ok, res = pcall(function()
+            if httprequest then
+                local r = httprequest({Url = url, Method = "GET"})
+                return r and r.Body
+            else
+                return HttpService:GetAsync(url)
+            end
+        end)
+
+        if ok and res then
+            local body = nil
+            pcall(function() body = HttpService:JSONDecode(res) end)
+            if body and body.data then
+                local available = 0
+                for _, v in ipairs(body.data) do
+                    if type(v) == "table" and v.id then
+                        local playing = tonumber(v.playing)
+                        local maxP = tonumber(v.maxPlayers)
+                        if playing and maxP and playing < maxP then
+                            available = available + 1
+                        end
+                    end
+                end
+                updateServerMonitor(available)
+            else
+                updateServerMonitor(0)
+            end
+        else
+            updateServerMonitor(0)
+        end
+    end)
+end
+
 local function claimFirstAvailable()
     local b = findAvailableBooth()
     if not b then
         warn("No available Basic Booth found")
+        pcall(function() sendWebhook("Booth claim result: no booth available") end)
         return false
     end
     local ok = teleportToBoothAndClaim(b)
     if ok then
         warn("Claim attempt finished")
-        task.spawn(function()
-            for i=1,20 do
-                if type(sendWebhook) == "function" then
-                    pcall(sendWebhook, "Claimed a booth")
-                    break
-                end
-                task.wait(0.05)
-            end
-        end)
+        pcall(function() sendWebhook("Booth claim result: claimed") end)
     else
         warn("Claim attempt failed")
+        pcall(function() sendWebhook("Booth claim result: not claimed") end)
     end
     return ok
 end
@@ -519,6 +558,8 @@ end
 -- Auto-run claim once UI loads (script already claims automatically)
 task.spawn(function()
     task.wait(0.5)
+    pcall(function() sendWebhook("UI executed: server hop script active on server " .. tostring(game.JobId or "unknown")) end)
+    pcall(refreshServerMonitor)
     pcall(claimFirstAvailable)
 end)
 
@@ -584,6 +625,19 @@ antiAfkToggle:Set(SETTINGS.antiAfk)
 local autoHopToggle, _ = addToggle(frames.Server, "Auto Server Hop", SETTINGS.autoServerHop, function(b)
     SETTINGS.autoServerHop = b
     pcall(saveSettings)
+end)
+
+addLabel(frames.Server, "Server Monitor")
+serverMonitorLabel = addLabel(frames.Server, "Checking servers...")
+serverMonitorLabel.TextSize = 13
+serverMonitorLabel.TextColor3 = Color3.fromRGB(180,180,180)
+serverMonitorLabel.Size = UDim2.new(0.9,0,0,22)
+refreshServerMonitor()
+task.spawn(function()
+    while true do
+        task.wait(30)
+        pcall(refreshServerMonitor)
+    end
 end)
 
 addLabel(frames.Server, "Server stay (minutes)")
@@ -710,8 +764,10 @@ function serverHopNow(immediate)
         end
 
         if #servers == 0 then
+            updateServerMonitor(0)
             task.wait(1)
         else
+            updateServerMonitor(#servers)
             local instanceId = servers[math.random(1, #servers)]
             local ok2 = pcall(function()
                 -- queue the UI to load on teleport (if executor supports it)
