@@ -113,6 +113,33 @@ local function sendDanceCommand()
     local sent = false
 
     pcall(function()
+        local textChatService = game:GetService("TextChatService")
+        if textChatService then
+            local channels = textChatService:FindFirstChild("TextChannels")
+            if channels then
+                local channel = channels:FindFirstChild("RBXGeneral") or channels:FindFirstChildWhichIsA("TextChannel")
+                if channel and type(channel.SendAsync) == "function" then
+                    channel:SendAsync(msg)
+                    sent = true
+                end
+            end
+
+            if not sent and type(textChatService.SendMessage) == "function" then
+                local ok = pcall(function()
+                    textChatService:SendMessage(msg, Enum.TextChannel.All)
+                end)
+                if ok then
+                    sent = true
+                end
+            end
+        end
+    end)
+
+    if sent then
+        return
+    end
+
+    pcall(function()
         local chatEvents = game:GetService("ReplicatedStorage"):FindFirstChild("DefaultChatSystemChatEvents")
         if chatEvents and chatEvents:FindFirstChild("SayMessageRequest") then
             chatEvents.SayMessageRequest:FireServer(msg, "All")
@@ -131,29 +158,27 @@ local function sendDanceCommand()
             sent = true
         end
     end)
-
-    if sent then
-        return
-    end
-
-    pcall(function()
-        local textChatService = game:GetService("TextChatService")
-        if textChatService and textChatService.SendMessage then
-            textChatService:SendMessage(msg, Enum.TextChannel.All)
-        end
-    end)
 end
 
 local serverBrowserGui = nil
 local serverBrowserList = nil
 
 local function ensureServerBrowser()
-    if serverBrowserGui then
+    local existing = PlayerGui:FindFirstChild("DonateToPlayersServerBrowser")
+    if existing and existing:IsA("ScreenGui") then
+        serverBrowserGui = existing
+        existing.Enabled = true
+        existing.Parent = PlayerGui
+        return existing
+    end
+
+    if serverBrowserGui and serverBrowserGui.Parent then
         serverBrowserGui.Enabled = true
+        serverBrowserGui.Parent = PlayerGui
         return serverBrowserGui
     end
 
-    local gui = new(PlayerGui, "ScreenGui", {Name = "DonateToPlayersServerBrowser", ResetOnSpawn = false})
+    local gui = new(PlayerGui, "ScreenGui", {Name = "DonateToPlayersServerBrowser", ResetOnSpawn = false, IgnoreGuiInset = true})
     serverBrowserGui = gui
 
     local frame = new(gui, "Frame", {
@@ -211,6 +236,7 @@ end
 local function refreshServerBrowser()
     local gui = ensureServerBrowser()
     gui.Enabled = true
+    gui.Parent = PlayerGui
 
     if not serverBrowserList then
         return
@@ -570,6 +596,32 @@ local function teleportToBoothAndClaim(model)
     end
     finalPos = Vector3.new(finalPos.X, anchorPart.Position.Y + 2, finalPos.Z)
 
+    local function orbitAndTryPrompt(promptObj)
+        if not promptObj then
+            return false
+        end
+
+        local orbitRadius = 3.2
+        local orbitHeight = 2.1
+        local orbitSteps = 8
+        local center = anchorPart.Position + Vector3.new(0, 0.2, 0)
+
+        for step = 1, orbitSteps do
+            local angle = (step / orbitSteps) * math.pi * 2
+            local offset = (front * math.cos(angle) + right * math.sin(angle)) * orbitRadius
+            local orbitPos = Vector3.new(center.X + offset.X, center.Y + orbitHeight, center.Z + offset.Z)
+            local lookAt = center + Vector3.new(0, 0.2, 0)
+            setPlayerPosition(orbitPos, lookAt)
+            task.wait(0.05)
+
+            if robustFirePrompt(promptObj) then
+                return true
+            end
+        end
+
+        return false
+    end
+
     local function robustFirePrompt(promptObj)
         if not promptObj then
             return false
@@ -673,7 +725,7 @@ local function teleportToBoothAndClaim(model)
 
     local okFire = false
     if prompt then
-        okFire = robustFirePrompt(prompt)
+        okFire = orbitAndTryPrompt(prompt)
     end
 
     if okFire then
@@ -685,7 +737,7 @@ local function teleportToBoothAndClaim(model)
     task.wait(0.12)
 
     if prompt then
-        okFire = robustFirePrompt(prompt)
+        okFire = orbitAndTryPrompt(prompt)
     end
 
     if not okFire then
@@ -695,7 +747,7 @@ local function teleportToBoothAndClaim(model)
             setPlayerPosition(retryPos, retryPos + front)
             task.wait(0.1)
             if prompt then
-                okFire = robustFirePrompt(prompt)
+                okFire = orbitAndTryPrompt(prompt)
             end
             if okFire then
                 break
@@ -712,6 +764,7 @@ local function teleportToBoothAndClaim(model)
 end
 
 local serverMonitorLabel = nil
+local claimLoopActive = false
 
 local function updateServerMonitor(count)
     if serverMonitorLabel then
@@ -757,33 +810,62 @@ local function refreshServerMonitor()
 end
 
 local function claimFirstAvailable()
-    local b = findAvailableBooth()
-    if not b then
-        warn("No available Basic Booth found")
-        pcall(function() sendWebhook("Booth claim result: no booth available") end)
-        return false
+    local deadline = os.clock() + 18
+    local claimed = false
+
+    while os.clock() < deadline do
+        local b = findAvailableBooth()
+        if b then
+            local ok = teleportToBoothAndClaim(b)
+            if ok then
+                warn("Claim attempt finished")
+                task.spawn(function()
+                    task.wait(0.5)
+                    sendDanceCommand()
+                end)
+                pcall(function() sendWebhook("Booth claim result: claimed") end)
+                claimed = true
+                break
+            end
+        end
+
+        task.wait(0.8)
     end
-    local ok = teleportToBoothAndClaim(b)
-    if ok then
-        warn("Claim attempt finished")
-        task.spawn(function()
-            task.wait(0.5)
-            sendDanceCommand()
-        end)
-        pcall(function() sendWebhook("Booth claim result: claimed") end)
-    else
+
+    if not claimed then
         warn("Claim attempt failed")
         pcall(function() sendWebhook("Booth claim result: not claimed") end)
     end
-    return ok
+
+    return claimed
 end
 
--- Auto-run claim once UI loads (script already claims automatically)
+local function beginAutoClaim()
+    if claimLoopActive then
+        return
+    end
+
+    claimLoopActive = true
+    task.spawn(function()
+        local ok, err = pcall(claimFirstAvailable)
+        if not ok then
+            warn("Claim loop error: " .. tostring(err))
+        end
+        claimLoopActive = false
+    end)
+end
+
+-- Auto-run claim once UI loads (and again after respawns)
 task.spawn(function()
     task.wait(0.5)
     pcall(function() sendWebhook("UI executed: server hop script active on server " .. tostring(game.JobId or "unknown")) end)
     pcall(refreshServerMonitor)
-    pcall(claimFirstAvailable)
+    beginAutoClaim()
+end)
+
+LocalPlayer.CharacterAdded:Connect(function()
+    task.wait(0.8)
+    beginAutoClaim()
 end)
 
 -- Queue-on-teleport helper for provided UI loadstring
