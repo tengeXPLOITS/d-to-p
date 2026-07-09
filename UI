@@ -60,6 +60,7 @@ local SETTINGS = {
     serverStayMinutes = 5,
     serverHopRange = 6, -- user-facing max 24
     boothPosition = "Front",
+    danceChoice = "None",
     -- main
     antiAfk = false,
     -- webhook
@@ -90,6 +91,147 @@ local function loadSettings()
 end
 
 loadSettings()
+
+local function sendDanceCommand()
+    local choice = SETTINGS.danceChoice or "None"
+    if not choice or choice == "None" then
+        return
+    end
+
+    local msg = "/e " .. choice
+    pcall(function()
+        local chatEvents = game:GetService("ReplicatedStorage"):FindFirstChild("DefaultChatSystemChatEvents")
+        if chatEvents and chatEvents:FindFirstChild("SayMessageRequest") then
+            chatEvents.SayMessageRequest:FireServer(msg, "All")
+            return
+        end
+
+        local textChatService = game:GetService("TextChatService")
+        if textChatService and textChatService.SendMessage then
+            textChatService:SendMessage(msg, Enum.TextChannel.All)
+        end
+    end)
+end
+
+local serverBrowserGui = nil
+local serverBrowserList = nil
+
+local function ensureServerBrowser()
+    if serverBrowserGui then
+        serverBrowserGui.Enabled = true
+        return serverBrowserGui
+    end
+
+    local gui = new(PlayerGui, "ScreenGui", {Name = "DonateToPlayersServerBrowser", ResetOnSpawn = false})
+    serverBrowserGui = gui
+
+    local frame = new(gui, "Frame", {
+        Name = "MainFrame",
+        Size = UDim2.new(0.42, 0, 0.58, 0),
+        Position = UDim2.new(0.5, 0, 0.5, 0),
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        BackgroundColor3 = Color3.fromRGB(16, 16, 16),
+        BorderSizePixel = 0,
+    })
+
+    local title = new(frame, "TextLabel", {
+        Name = "Title",
+        Size = UDim2.new(1, -16, 0, 34),
+        Position = UDim2.new(0, 8, 0, 8),
+        BackgroundTransparency = 1,
+        Text = "Available Servers",
+        TextColor3 = Color3.new(1, 1, 1),
+        Font = Enum.Font.GothamBold,
+        TextSize = 16,
+        TextXAlignment = Enum.TextXAlignment.Left,
+    })
+
+    local closeBtn = new(frame, "TextButton", {
+        Name = "CloseButton",
+        Size = UDim2.new(0, 84, 0, 28),
+        Position = UDim2.new(1, -92, 0, 10),
+        BackgroundColor3 = Color3.fromRGB(120, 35, 35),
+        Text = "Close",
+        TextColor3 = Color3.new(1, 1, 1),
+        Font = Enum.Font.Gotham,
+        TextSize = 13,
+    })
+    closeBtn.MouseButton1Click:Connect(function()
+        if serverBrowserGui then
+            serverBrowserGui.Enabled = false
+        end
+    end)
+
+    local list = new(frame, "ScrollingFrame", {
+        Name = "ServerList",
+        Position = UDim2.new(0, 8, 0, 50),
+        Size = UDim2.new(1, -16, 1, -58),
+        BackgroundTransparency = 1,
+        ScrollBarThickness = 6,
+    })
+    local layout = new(list, "UIListLayout", {})
+    layout.SortOrder = Enum.SortOrder.LayoutOrder
+    layout.Padding = UDim.new(0, 6)
+    serverBrowserList = list
+
+    return gui
+end
+
+local function refreshServerBrowser()
+    local gui = ensureServerBrowser()
+    gui.Enabled = true
+
+    if not serverBrowserList then
+        return
+    end
+
+    for _, child in ipairs(serverBrowserList:GetChildren()) do
+        if child:IsA("Frame") then
+            child:Destroy()
+        end
+    end
+
+    local placeId = tostring(HOP_PLACE_ID or game.PlaceId)
+    local url = "https://games.roblox.com/v1/games/" .. placeId .. "/servers/Public?sortOrder=Desc&limit=100"
+    local ok, res = pcall(function()
+        if httprequest then
+            local r = httprequest({Url = url, Method = "GET"})
+            return r and r.Body
+        else
+            return HttpService:GetAsync(url)
+        end
+    end)
+
+    if not (ok and res) then
+        local empty = new(serverBrowserList, "Frame", {Size = UDim2.new(1, 0, 0, 28), BackgroundTransparency = 1})
+        local label = new(empty, "TextLabel", {Text = "Unable to load server list.", BackgroundTransparency = 1, TextColor3 = Color3.fromRGB(220, 220, 220), Font = Enum.Font.Gotham, TextSize = 13, Size = UDim2.new(1, 0, 1, 0), TextXAlignment = Enum.TextXAlignment.Left})
+        return
+    end
+
+    local body = nil
+    pcall(function() body = HttpService:JSONDecode(res) end)
+    if not (body and body.data) then
+        local empty = new(serverBrowserList, "Frame", {Size = UDim2.new(1, 0, 0, 28), BackgroundTransparency = 1})
+        local label = new(empty, "TextLabel", {Text = "No server data returned.", BackgroundTransparency = 1, TextColor3 = Color3.fromRGB(220, 220, 220), Font = Enum.Font.Gotham, TextSize = 13, Size = UDim2.new(1, 0, 1, 0), TextXAlignment = Enum.TextXAlignment.Left})
+        return
+    end
+
+    local rows = {}
+    for _, v in ipairs(body.data) do
+        if type(v) == "table" and v.id then
+            local playing = tonumber(v.playing) or 0
+            local maxP = tonumber(v.maxPlayers) or 0
+            local row = new(serverBrowserList, "Frame", {Size = UDim2.new(1, 0, 0, 36), BackgroundColor3 = Color3.fromRGB(28, 28, 28), BorderSizePixel = 0})
+            local label = new(row, "TextLabel", {Text = "Players " .. tostring(playing) .. "/" .. tostring(maxP) .. "  •  Server " .. tostring(v.id:sub(1, 8)), BackgroundTransparency = 1, TextColor3 = Color3.new(1, 1, 1), Font = Enum.Font.Gotham, TextSize = 13, Size = UDim2.new(1, -12, 1, 0), Position = UDim2.new(0, 6, 0, 0), TextXAlignment = Enum.TextXAlignment.Left})
+            table.insert(rows, row)
+        end
+    end
+
+    if #rows == 0 then
+        local empty = new(serverBrowserList, "Frame", {Size = UDim2.new(1, 0, 0, 28), BackgroundTransparency = 1})
+        local label = new(empty, "TextLabel", {Text = "No public servers were returned.", BackgroundTransparency = 1, TextColor3 = Color3.fromRGB(220, 220, 220), Font = Enum.Font.Gotham, TextSize = 13, Size = UDim2.new(1, 0, 1, 0), TextXAlignment = Enum.TextXAlignment.Left})
+    end
+end
 
 -- Helpers
 local function new(parent, class, props)
@@ -435,6 +577,14 @@ local function teleportToBoothAndClaim(model)
         local forward = (promptCFrame.LookVector.Magnitude > 0 and promptCFrame.LookVector) or Vector3.new(0, 0, -1)
         local right = promptCFrame.RightVector
 
+        pcall(function()
+            promptObj.Enabled = true
+            promptObj.RequiresLineOfSight = false
+            promptObj.ClickablePrompt = true
+            promptObj.HoldDuration = 0.05
+            promptObj.MaxActivationDistance = math.max(promptObj.MaxActivationDistance or 8, 12)
+        end)
+
         local offsets = {
             Vector3.new(0, 0, 0),
             forward * math.min(0.3, activationDistance),
@@ -519,7 +669,27 @@ local function teleportToBoothAndClaim(model)
         okFire = robustFirePrompt(prompt)
     end
 
-    return okFire
+    if not okFire then
+        for retry = 1, 3 do
+            local retryPos = anchorPart.Position + (front * (retry == 1 and 0.6 or 1.2))
+            retryPos = Vector3.new(retryPos.X, anchorPart.Position.Y + 2.1, retryPos.Z)
+            setPlayerPosition(retryPos, retryPos + front)
+            task.wait(0.1)
+            if prompt then
+                okFire = robustFirePrompt(prompt)
+            end
+            if okFire then
+                break
+            end
+        end
+    end
+
+    if okFire then
+        setPlayerPosition(finalPos, finalPos + ((hrp.CFrame and hrp.CFrame.LookVector) or Vector3.new(0, 0, -1)))
+        return true
+    end
+
+    return false
 end
 
 local serverMonitorLabel = nil
@@ -577,6 +747,10 @@ local function claimFirstAvailable()
     local ok = teleportToBoothAndClaim(b)
     if ok then
         warn("Claim attempt finished")
+        task.spawn(function()
+            task.wait(0.2)
+            sendDanceCommand()
+        end)
         pcall(function() sendWebhook("Booth claim result: claimed") end)
     else
         warn("Claim attempt failed")
@@ -644,6 +818,12 @@ local function setAntiAfk(enabled)
     pcall(saveSettings)
 end
 
+addLabel(frames.Main, "Dance")
+local danceChoice, _ = addRadioGroup(frames.Main, {"None", "dance1", "dance2", "dance3"}, SETTINGS.danceChoice or "None", function(sel)
+    SETTINGS.danceChoice = sel
+    pcall(saveSettings)
+end)
+
 local antiAfkToggle, _ = addToggle(frames.Main, "Anti AFK", SETTINGS.antiAfk, function(b)
     setAntiAfk(b)
 end)
@@ -662,6 +842,9 @@ serverMonitorLabel = addLabel(frames.Server, "Checking servers...")
 serverMonitorLabel.TextSize = 13
 serverMonitorLabel.TextColor3 = Color3.fromRGB(180,180,180)
 serverMonitorLabel.Size = UDim2.new(0.9,0,0,22)
+local serverBrowserBtn = addButton(frames.Server, "Open Server Browser", function()
+    pcall(refreshServerBrowser)
+end)
 refreshServerMonitor()
 task.spawn(function()
     while true do
