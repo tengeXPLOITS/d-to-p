@@ -102,89 +102,7 @@ local function new(parent, class, props)
 end
 
 local function sendDanceCommand()
-    local choice = SETTINGS.danceChoice or "None"
-    if not choice or choice == "None" then
-        return
-    end
-
-    local msg = "/e " .. choice
-    local sent = false
-
-    pcall(function()
-        local textChatService = game:GetService("TextChatService")
-        if textChatService then
-            local channels = {}
-            local textChannelsFolder = textChatService:FindFirstChild("TextChannels")
-            if textChannelsFolder then
-                for _, child in ipairs(textChannelsFolder:GetChildren()) do
-                    if child:IsA("TextChannel") then
-                        table.insert(channels, child)
-                    end
-                end
-            end
-
-            local fallbackChannel = textChatService:FindFirstChildWhichIsA("TextChannel")
-            if fallbackChannel then
-                table.insert(channels, fallbackChannel)
-            end
-
-            for _, channel in ipairs(channels) do
-                if channel and type(channel.SendAsync) == "function" then
-                    local ok = pcall(function()
-                        channel:SendAsync(msg)
-                    end)
-                    if ok then
-                        sent = true
-                        break
-                    end
-                end
-            end
-
-            if not sent and type(textChatService.SendMessage) == "function" then
-                local ok1 = pcall(function()
-                    textChatService:SendMessage(msg, "All")
-                end)
-                local ok2 = pcall(function()
-                    textChatService:SendMessage(msg, Enum.TextChannel.All)
-                end)
-                if ok1 or ok2 then
-                    sent = true
-                end
-            end
-        end
-    end)
-
-    if sent then
-        print("Dance command sent:", msg)
-        return
-    end
-
-    pcall(function()
-        local chatEvents = game:GetService("ReplicatedStorage"):FindFirstChild("DefaultChatSystemChatEvents")
-        if chatEvents and chatEvents:FindFirstChild("SayMessageRequest") then
-            chatEvents.SayMessageRequest:FireServer(msg, "All")
-            sent = true
-        end
-    end)
-
-    if sent then
-        print("Dance command sent via legacy SayMessageRequest:", msg)
-        return
-    end
-
-    pcall(function()
-        local playersService = game:GetService("Players")
-        if playersService and playersService.Chat then
-            playersService:Chat(msg)
-            sent = true
-        end
-    end)
-
-    if sent then
-        print("Dance command sent via Players.Chat:", msg)
-    else
-        warn("Dance command failed to send for choice:", choice)
-    end
+    return
 end
 
 local serverBrowserGui = nil
@@ -507,16 +425,49 @@ end)
 
     -- Claiming logic per user's spec
     local function findAvailableBooth()
-    local stands = workspace:FindFirstChild("Stands")
-    if not stands then return nil end
-    for _, model in ipairs(stands:GetChildren()) do
-        if model:IsA("Model") and model.Name == "Basic Booth" then
-            local usernameVal = model:FindFirstChild("Username")
-            if usernameVal and (usernameVal.Value == nil or usernameVal.Value == "") then
-                return model
+    local candidates = {}
+
+    local function addModel(model)
+        if not model or not model:IsA("Model") then
+            return
+        end
+
+        local nameLower = string.lower(model.Name or "")
+        local hasClaimedPart = model:FindFirstChild("ClaimedPart") or model:FindFirstChildWhichIsA("BasePart")
+        local usernameVal = model:FindFirstChild("Username")
+        local hasPrompt = false
+        for _, inst in ipairs(model:GetDescendants()) do
+            if inst:IsA("ProximityPrompt") then
+                hasPrompt = true
+                break
+            end
+        end
+
+        if hasClaimedPart and hasPrompt and (nameLower == "basic booth" or string.find(nameLower, "booth", 1, true)) then
+            local isOpen = not usernameVal or usernameVal.Value == nil or usernameVal.Value == ""
+            if isOpen then
+                table.insert(candidates, model)
             end
         end
     end
+
+    local stands = workspace:FindFirstChild("Stands")
+    if stands then
+        for _, model in ipairs(stands:GetChildren()) do
+            addModel(model)
+        end
+    end
+
+    for _, model in ipairs(workspace:GetDescendants()) do
+        if model:IsA("Model") then
+            addModel(model)
+        end
+    end
+
+    if #candidates > 0 then
+        return candidates[1]
+    end
+
     return nil
 end
 
@@ -602,11 +553,17 @@ end
 
     local promptCandidates = getClaimPromptCandidates()
     local prompt = nil
+    print("Claim debug: booth", model.Name, "prompts found", #promptCandidates)
     for _, candidate in ipairs(promptCandidates) do
         if candidate and candidate.Enabled ~= false then
             prompt = candidate
+            print("Claim debug: using prompt", candidate.ActionText, candidate.ObjectText, candidate.Parent and candidate.Parent.Name or "<none>")
             break
         end
+    end
+
+    if not prompt then
+        warn("Claim debug: no usable claim prompt found for booth", model.Name)
     end
 
     local dist = 4
@@ -658,6 +615,8 @@ end
         if not promptObj then
             return false
         end
+
+        print("Claim debug: firing prompt", promptObj.ActionText, promptObj.ObjectText)
         if promptObj.Enabled == false then
             pcall(function()
                 promptObj.Enabled = true
@@ -851,10 +810,6 @@ end
             local ok = teleportToBoothAndClaim(b)
             if ok then
                 warn("Claim attempt finished")
-                task.spawn(function()
-                    task.wait(0.5)
-                    sendDanceCommand()
-                end)
                 pcall(function() sendWebhook("Booth claim result: claimed") end)
                 claimed = true
                 break
@@ -947,12 +902,6 @@ end
     end
     pcall(saveSettings)
 end
-
-    addLabel(frames.Main, "Dance")
-    local danceChoice, _ = addRadioGroup(frames.Main, {"None", "dance1", "dance2", "dance3"}, SETTINGS.danceChoice or "None", function(sel)
-    SETTINGS.danceChoice = sel
-    pcall(saveSettings)
-end)
 
     local antiAfkToggle, _ = addToggle(frames.Main, "Anti AFK", SETTINGS.antiAfk, function(b)
     setAntiAfk(b)
