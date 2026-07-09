@@ -43,10 +43,8 @@ print("Okfean Community verified. Loading donation UI...")
 if PlayerGui:FindFirstChild("DonateToPlayersUI") then
     PlayerGui:FindFirstChild("DonateToPlayersUI"):Destroy()
 end
-if getgenv().DonateToPlayers_Ran then
-    return
-end
 getgenv().DonateToPlayers_Ran = true
+getgenv().DonateToPlayers_UIReady = false
 -- Use the current place for server hopping so the UI applies to the active community game instead of one fixed place.
 local HOP_PLACE_ID = game.PlaceId
 
@@ -115,20 +113,41 @@ local function sendDanceCommand()
     pcall(function()
         local textChatService = game:GetService("TextChatService")
         if textChatService then
-            local channels = textChatService:FindFirstChild("TextChannels")
-            if channels then
-                local channel = channels:FindFirstChild("RBXGeneral") or channels:FindFirstChildWhichIsA("TextChannel")
+            local channels = {}
+            local textChannelsFolder = textChatService:FindFirstChild("TextChannels")
+            if textChannelsFolder then
+                for _, child in ipairs(textChannelsFolder:GetChildren()) do
+                    if child:IsA("TextChannel") then
+                        table.insert(channels, child)
+                    end
+                end
+            end
+
+            local fallbackChannel = textChatService:FindFirstChildWhichIsA("TextChannel")
+            if fallbackChannel then
+                table.insert(channels, fallbackChannel)
+            end
+
+            for _, channel in ipairs(channels) do
                 if channel and type(channel.SendAsync) == "function" then
-                    channel:SendAsync(msg)
-                    sent = true
+                    local ok = pcall(function()
+                        channel:SendAsync(msg)
+                    end)
+                    if ok then
+                        sent = true
+                        break
+                    end
                 end
             end
 
             if not sent and type(textChatService.SendMessage) == "function" then
-                local ok = pcall(function()
+                local ok1 = pcall(function()
+                    textChatService:SendMessage(msg, "All")
+                end)
+                local ok2 = pcall(function()
                     textChatService:SendMessage(msg, Enum.TextChannel.All)
                 end)
-                if ok then
+                if ok1 or ok2 then
                     sent = true
                 end
             end
@@ -136,6 +155,7 @@ local function sendDanceCommand()
     end)
 
     if sent then
+        print("Dance command sent:", msg)
         return
     end
 
@@ -148,6 +168,7 @@ local function sendDanceCommand()
     end)
 
     if sent then
+        print("Dance command sent via legacy SayMessageRequest:", msg)
         return
     end
 
@@ -158,6 +179,12 @@ local function sendDanceCommand()
             sent = true
         end
     end)
+
+    if sent then
+        print("Dance command sent via Players.Chat:", msg)
+    else
+        warn("Dance command failed to send for choice:", choice)
+    end
 end
 
 local serverBrowserGui = nil
@@ -291,10 +318,15 @@ local function refreshServerBrowser()
 end
 
 -- Build UI
-local screen = new(PlayerGui, "ScreenGui", {Name = "DonateToPlayersUI", ResetOnSpawn=false, IgnoreGuiInset=true})
+local function buildMainUI()
+    if PlayerGui:FindFirstChild("DonateToPlayersUI") then
+        PlayerGui:FindFirstChild("DonateToPlayersUI"):Destroy()
+    end
 
--- Window as plain Frame (no squiggle image)
-local window = new(screen, "Frame", {
+    local screen = new(PlayerGui, "ScreenGui", {Name = "DonateToPlayersUI", ResetOnSpawn=false, IgnoreGuiInset=true})
+
+    -- Window as plain Frame (no squiggle image)
+    local window = new(screen, "Frame", {
     Name = "Window",
     AnchorPoint = Vector2.new(0.5,0.5),
     Position = UDim2.new(0.5, 0, 0.5, 0),
@@ -304,12 +336,12 @@ local window = new(screen, "Frame", {
 })
 
 -- Title bar (green strip) used for drag
-local titleBar = new(window, "Frame", {
+    local titleBar = new(window, "Frame", {
     Name = "TitleBar",
     Size = UDim2.new(1,0,0,36),
     BackgroundColor3 = Color3.fromRGB(2, 160, 79),
 })
-local title = new(titleBar, "TextLabel", {
+    local title = new(titleBar, "TextLabel", {
     Text = "Donate To Plrs <3",
     TextColor3 = Color3.new(1,1,1),
     BackgroundTransparency = 1,
@@ -322,22 +354,22 @@ local title = new(titleBar, "TextLabel", {
     TextWrapped = false,
 })
 
--- Tab buttons
-local tabRow = new(window, "Frame", {
+    -- Tab buttons
+    local tabRow = new(window, "Frame", {
     Name = "TabRow",
     Position = UDim2.new(0,8,0,40),
     Size = UDim2.new(1,-16,0,36),
     BackgroundTransparency = 1,
 })
 -- center the tab buttons
-local tabLayout = new(tabRow, "UIListLayout", {})
+    local tabLayout = new(tabRow, "UIListLayout", {})
 tabLayout.FillDirection = Enum.FillDirection.Horizontal
 tabLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
 tabLayout.SortOrder = Enum.SortOrder.LayoutOrder
 tabLayout.Padding = UDim.new(0,8)
 
 
-local function makeTabButton(name, parent)
+    local function makeTabButton(name, parent)
     local btn = new(parent, "TextButton", {
         Text = name,
         BackgroundColor3 = Color3.fromRGB(40,40,40),
@@ -350,21 +382,21 @@ local function makeTabButton(name, parent)
     return btn
 end
 
-local tabs = {}
-tabs.booth = makeTabButton("Booth", tabRow)
-tabs.main = makeTabButton("Main", tabRow)
-tabs.server = makeTabButton("Server", tabRow)
-tabs.webhook = makeTabButton("Webhook", tabRow)
+    local tabs = {}
+    tabs.booth = makeTabButton("Booth", tabRow)
+    tabs.main = makeTabButton("Main", tabRow)
+    tabs.server = makeTabButton("Server", tabRow)
+    tabs.webhook = makeTabButton("Webhook", tabRow)
 
--- Content area
-local content = new(window, "Frame", {
+    -- Content area
+    local content = new(window, "Frame", {
     Name = "Content",
     Position = UDim2.new(0,8,0,84),
     Size = UDim2.new(1,-16,1,-96),
     BackgroundTransparency = 1,
 })
 
-local function makeContentFrame(name)
+    local function makeContentFrame(name)
     local f = new(content, "ScrollingFrame", {
         Name = name.."Frame",
         Size = UDim2.new(1,0,1,0),
@@ -386,28 +418,28 @@ local function makeContentFrame(name)
     return f
 end
 
-local frames = {
+    local frames = {
     Booth = makeContentFrame("Booth"),
     Main = makeContentFrame("Main"),
     Server = makeContentFrame("Server"),
     Webhook = makeContentFrame("Webhook"),
 }
 
-frames.Booth.Visible = true
+    frames.Booth.Visible = true
 
--- Simple control factory
-local function addLabel(parent, text)
+    -- Simple control factory
+    local function addLabel(parent, text)
     return new(parent, "TextLabel", {Text=text, BackgroundTransparency=1, TextColor3=Color3.new(1,1,1), Font=Enum.Font.Gotham, TextSize=14, Size=UDim2.new(0.9,0,0,20)})
 end
 
-local function addButton(parent, text, cb)
+    local function addButton(parent, text, cb)
     local btn = new(parent, "TextButton", {Text = text, Size = UDim2.new(0.9,0,0,34), BackgroundColor3=Color3.fromRGB(28,120,68), TextColor3=Color3.new(1,1,1), Font=Enum.Font.Gotham, TextSize=14})
     btn.AutoButtonColor = true
     btn.MouseButton1Click:Connect(function() pcall(cb) end)
     return btn
 end
 
-local function addTextBox(parent, placeholder, onEnter)
+    local function addTextBox(parent, placeholder, onEnter)
     local box = new(parent, "TextBox", {Text = "", PlaceholderText = placeholder, Size = UDim2.new(0.9,0,0,30), BackgroundColor3=Color3.fromRGB(36,36,36), TextColor3=Color3.fromRGB(220,220,220), Font=Enum.Font.Gotham, TextSize=14})
     box.FocusLost:Connect(function(enter)
         if enter then pcall(function() onEnter(box.Text) end) end
@@ -415,8 +447,8 @@ local function addTextBox(parent, placeholder, onEnter)
     return box
 end
 
--- labeled toggle: returns toggle object with Set(bool)
-local function addToggle(parent, labelText, initial, callback)
+    -- labeled toggle: returns toggle object with Set(bool)
+    local function addToggle(parent, labelText, initial, callback)
     local container = new(parent, "Frame", {Size = UDim2.new(0.9,0,0,34), BackgroundTransparency = 1})
     local lbl = new(container, "TextLabel", {Text = labelText, BackgroundTransparency = 1, TextColor3 = Color3.new(1,1,1), Font = Enum.Font.Gotham, TextSize = 14, Position = UDim2.new(0,0,0,2), Size = UDim2.new(0.8,0,1,0), TextXAlignment = Enum.TextXAlignment.Left})
     local box = new(container, "TextButton", {Text = initial and "✓" or "", BackgroundColor3 = Color3.fromRGB(34,139,34), TextColor3 = Color3.new(1,1,1), Size = UDim2.new(0,28,0,28), Position = UDim2.new(1,-28,0,3), AutoButtonColor = true, Font = Enum.Font.Gotham, TextSize = 18})
@@ -435,8 +467,8 @@ local function addToggle(parent, labelText, initial, callback)
     return obj, container
 end
 
--- radio group for choosing one of several options
-local function addRadioGroup(parent, options, initial, callback)
+    -- radio group for choosing one of several options
+    local function addRadioGroup(parent, options, initial, callback)
     local container = new(parent, "Frame", {Size = UDim2.new(0.9,0,0,40), BackgroundTransparency = 1})
     local layout = new(container, "UIListLayout", {})
     layout.FillDirection = Enum.FillDirection.Horizontal
@@ -464,17 +496,17 @@ local function addRadioGroup(parent, options, initial, callback)
     return function() return selected end, container
 end
 
--- Booth tab controls: simplified per user request (removed text update, dance, and delay controls)
-addLabel(frames.Booth, "Booth Position")
-local getBoothPos, _ = addRadioGroup(frames.Booth, {"Front","Behind","Left","Right"}, SETTINGS.boothPosition, function(sel)
+    -- Booth tab controls: simplified per user request (removed text update, dance, and delay controls)
+    addLabel(frames.Booth, "Booth Position")
+    local getBoothPos, _ = addRadioGroup(frames.Booth, {"Front","Behind","Left","Right"}, SETTINGS.boothPosition, function(sel)
     SETTINGS.boothPosition = sel
     pcall(saveSettings)
 end)
 
--- (Removed goal, text color, and custom text fields per user request)
+    -- (Removed goal, text color, and custom text fields per user request)
 
--- Claiming logic per user's spec
-local function findAvailableBooth()
+    -- Claiming logic per user's spec
+    local function findAvailableBooth()
     local stands = workspace:FindFirstChild("Stands")
     if not stands then return nil end
     for _, model in ipairs(stands:GetChildren()) do
@@ -488,7 +520,7 @@ local function findAvailableBooth()
     return nil
 end
 
-local function teleportToBoothAndClaim(model)
+    local function teleportToBoothAndClaim(model)
     if not model then return false end
 
     local claimedPart = model:FindFirstChild("ClaimedPart") or model:FindFirstChildWhichIsA("BasePart")
@@ -601,10 +633,10 @@ local function teleportToBoothAndClaim(model)
             return false
         end
 
-        local orbitRadius = 3.2
-        local orbitHeight = 2.1
-        local orbitSteps = 8
-        local center = anchorPart.Position + Vector3.new(0, 0.2, 0)
+        local orbitRadius = 4.2
+        local orbitHeight = 2.4
+        local orbitSteps = 12
+        local center = anchorPart.Position + Vector3.new(0, 0.25, 0)
 
         for step = 1, orbitSteps do
             local angle = (step / orbitSteps) * math.pi * 2
@@ -612,7 +644,7 @@ local function teleportToBoothAndClaim(model)
             local orbitPos = Vector3.new(center.X + offset.X, center.Y + orbitHeight, center.Z + offset.Z)
             local lookAt = center + Vector3.new(0, 0.2, 0)
             setPlayerPosition(orbitPos, lookAt)
-            task.wait(0.05)
+            task.wait(0.08)
 
             if robustFirePrompt(promptObj) then
                 return true
@@ -763,16 +795,16 @@ local function teleportToBoothAndClaim(model)
     return false
 end
 
-local serverMonitorLabel = nil
-local claimLoopActive = false
+    local serverMonitorLabel = nil
+    local claimLoopActive = false
 
-local function updateServerMonitor(count)
+    local function updateServerMonitor(count)
     if serverMonitorLabel then
         serverMonitorLabel.Text = "Available servers: " .. tostring(count or 0)
     end
 end
 
-local function refreshServerMonitor()
+    local function refreshServerMonitor()
     task.spawn(function()
         local placeId = tostring(HOP_PLACE_ID or game.PlaceId)
         local url = "https://games.roblox.com/v1/games/" .. placeId .. "/servers/Public?sortOrder=Desc&limit=100"
@@ -809,7 +841,7 @@ local function refreshServerMonitor()
     end)
 end
 
-local function claimFirstAvailable()
+    local function claimFirstAvailable()
     local deadline = os.clock() + 18
     local claimed = false
 
@@ -840,7 +872,7 @@ local function claimFirstAvailable()
     return claimed
 end
 
-local function beginAutoClaim()
+    local function beginAutoClaim()
     if claimLoopActive then
         return
     end
@@ -855,22 +887,19 @@ local function beginAutoClaim()
     end)
 end
 
--- Auto-run claim once UI loads (and again after respawns)
-task.spawn(function()
-    task.wait(0.5)
-    pcall(function() sendWebhook("UI executed: server hop script active on server " .. tostring(game.JobId or "unknown")) end)
-    pcall(refreshServerMonitor)
-    beginAutoClaim()
-end)
+    -- Auto-run claim once UI loads (and again after respawns)
+    task.spawn(function()
+        task.wait(0.5)
+        pcall(function() sendWebhook("UI executed: server hop script active on server " .. tostring(game.JobId or "unknown")) end)
+        pcall(refreshServerMonitor)
+        beginAutoClaim()
+    end)
 
-LocalPlayer.CharacterAdded:Connect(function()
-    task.wait(0.8)
-    beginAutoClaim()
-end)
+    getgenv().DonateToPlayers_BeginAutoClaim = beginAutoClaim
 
--- Queue-on-teleport helper for provided UI loadstring
-local function queueLoadOnTeleport()
-    local code = 'loadstring(game:HttpGet("https://raw.githubusercontent.com/tengeXPLOITS/d-to-p/refs/heads/main/UI"))()'
+    -- Queue-on-teleport helper for provided UI loadstring
+    local function queueLoadOnTeleport()
+    local code = 'loadstring(game:HttpGet("https://raw.githubusercontent.com/tengeXPLOITS/d-to-p/refs/heads/main/UI.lua"))()'
     local q = queue_on_teleport or (syn and syn.queue_on_teleport) or (queue_on_teleport) or (fluxus and fluxus.queue_on_teleport)
     if q then
         pcall(q, code)
@@ -880,25 +909,25 @@ local function queueLoadOnTeleport()
     end
 end
 
--- expose helper on global for manual use
-getgenv().DonateToPlayers_QueueOnTeleport = queueLoadOnTeleport
+    -- expose helper on global for manual use
+    getgenv().DonateToPlayers_QueueOnTeleport = queueLoadOnTeleport
 
--- Tab switching
-local function selectTab(name)
+    -- Tab switching
+    local function selectTab(name)
     for k,v in pairs(frames) do v.Visible = false end
     frames[name].Visible = true
 end
 
-tabs.booth.MouseButton1Click:Connect(function() selectTab("Booth") end)
-tabs.main.MouseButton1Click:Connect(function() selectTab("Main") end)
-tabs.server.MouseButton1Click:Connect(function() selectTab("Server") end)
-tabs.webhook.MouseButton1Click:Connect(function() selectTab("Webhook") end)
+    tabs.booth.MouseButton1Click:Connect(function() selectTab("Booth") end)
+    tabs.main.MouseButton1Click:Connect(function() selectTab("Main") end)
+    tabs.server.MouseButton1Click:Connect(function() selectTab("Server") end)
+    tabs.webhook.MouseButton1Click:Connect(function() selectTab("Webhook") end)
 
--- Small Main and Server content placeholders
--- Main tab: Anti AFK toggle
--- anti-AFK implementation
-local antiAfkConn = nil
-local function setAntiAfk(enabled)
+    -- Small Main and Server content placeholders
+    -- Main tab: Anti AFK toggle
+    -- anti-AFK implementation
+    local antiAfkConn = nil
+    local function setAntiAfk(enabled)
     SETTINGS.antiAfk = enabled
     if enabled then
         if antiAfkConn then return end
@@ -919,43 +948,43 @@ local function setAntiAfk(enabled)
     pcall(saveSettings)
 end
 
-addLabel(frames.Main, "Dance")
-local danceChoice, _ = addRadioGroup(frames.Main, {"None", "dance1", "dance2", "dance3"}, SETTINGS.danceChoice or "None", function(sel)
+    addLabel(frames.Main, "Dance")
+    local danceChoice, _ = addRadioGroup(frames.Main, {"None", "dance1", "dance2", "dance3"}, SETTINGS.danceChoice or "None", function(sel)
     SETTINGS.danceChoice = sel
     pcall(saveSettings)
 end)
 
-local antiAfkToggle, _ = addToggle(frames.Main, "Anti AFK", SETTINGS.antiAfk, function(b)
+    local antiAfkToggle, _ = addToggle(frames.Main, "Anti AFK", SETTINGS.antiAfk, function(b)
     setAntiAfk(b)
 end)
-setAntiAfk(SETTINGS.antiAfk)
--- ensure changes persist when toggled
-antiAfkToggle:Set(SETTINGS.antiAfk)
+    setAntiAfk(SETTINGS.antiAfk)
+    -- ensure changes persist when toggled
+    antiAfkToggle:Set(SETTINGS.antiAfk)
 
--- Server tab: Auto server hop, stay minutes, hop range, and immediate hop button
-local autoHopToggle, _ = addToggle(frames.Server, "Auto Server Hop", SETTINGS.autoServerHop, function(b)
+    -- Server tab: Auto server hop, stay minutes, hop range, and immediate hop button
+    local autoHopToggle, _ = addToggle(frames.Server, "Auto Server Hop", SETTINGS.autoServerHop, function(b)
     SETTINGS.autoServerHop = b
     pcall(saveSettings)
 end)
 
-addLabel(frames.Server, "Server Monitor")
-serverMonitorLabel = addLabel(frames.Server, "Checking servers...")
-serverMonitorLabel.TextSize = 13
-serverMonitorLabel.TextColor3 = Color3.fromRGB(180,180,180)
-serverMonitorLabel.Size = UDim2.new(0.9,0,0,22)
-local serverBrowserBtn = addButton(frames.Server, "Open Server Browser", function()
+    addLabel(frames.Server, "Server Monitor")
+    serverMonitorLabel = addLabel(frames.Server, "Checking servers...")
+    serverMonitorLabel.TextSize = 13
+    serverMonitorLabel.TextColor3 = Color3.fromRGB(180,180,180)
+    serverMonitorLabel.Size = UDim2.new(0.9,0,0,22)
+    local serverBrowserBtn = addButton(frames.Server, "Open Server Browser", function()
     pcall(refreshServerBrowser)
 end)
-refreshServerMonitor()
-task.spawn(function()
+    refreshServerMonitor()
+    task.spawn(function()
     while true do
         task.wait(30)
         pcall(refreshServerMonitor)
     end
 end)
 
-addLabel(frames.Server, "Server stay (minutes)")
-local stayBox = addTextBox(frames.Server, tostring(SETTINGS.serverStayMinutes), function(v)
+    addLabel(frames.Server, "Server stay (minutes)")
+    local stayBox = addTextBox(frames.Server, tostring(SETTINGS.serverStayMinutes), function(v)
     local n = tonumber(v)
     if n and n > 0 then SETTINGS.serverStayMinutes = n end
     stayBox.Text = tostring(SETTINGS.serverStayMinutes)
@@ -963,8 +992,8 @@ local stayBox = addTextBox(frames.Server, tostring(SETTINGS.serverStayMinutes), 
 end)
 stayBox.Text = tostring(SETTINGS.serverStayMinutes)
 
-addLabel(frames.Server, "Server hop range (max 24)")
-local rangeBox = addTextBox(frames.Server, tostring(SETTINGS.serverHopRange), function(v)
+    addLabel(frames.Server, "Server hop range (max 24)")
+    local rangeBox = addTextBox(frames.Server, tostring(SETTINGS.serverHopRange), function(v)
     local n = tonumber(v)
     if n then
         n = math.floor(n)
@@ -977,26 +1006,26 @@ local rangeBox = addTextBox(frames.Server, tostring(SETTINGS.serverHopRange), fu
 end)
 rangeBox.Text = tostring(SETTINGS.serverHopRange)
 
-local serverHopBtn = addButton(frames.Server, "Server Hop Now", function()
+    local serverHopBtn = addButton(frames.Server, "Server Hop Now", function()
     task.spawn(function()
         pcall(function() serverHopNow(true) end)
     end)
 end)
 
--- Webhook tab UI
-addLabel(frames.Webhook, "Webhook URL")
-local webhookBox = addTextBox(frames.Webhook, "https://discord.com/api/webhooks/...", function(v)
+    -- Webhook tab UI
+    addLabel(frames.Webhook, "Webhook URL")
+    local webhookBox = addTextBox(frames.Webhook, "https://discord.com/api/webhooks/...", function(v)
     SETTINGS.webhookUrl = v
     pcall(saveSettings)
 end)
 webhookBox.Text = SETTINGS.webhookUrl or ""
 
-local webhookToggle, _ = addToggle(frames.Webhook, "Send webhook on claim", SETTINGS.webhookEnabled or false, function(b)
+    local webhookToggle, _ = addToggle(frames.Webhook, "Send webhook on claim", SETTINGS.webhookEnabled or false, function(b)
     SETTINGS.webhookEnabled = b
     pcall(saveSettings)
 end)
 
-local function sendWebhook(content)
+    local function sendWebhook(content)
     if not SETTINGS.webhookEnabled or not SETTINGS.webhookUrl then return end
     local payload = HttpService:JSONEncode({content = content})
     pcall(function()
@@ -1008,12 +1037,12 @@ local function sendWebhook(content)
     end)
 end
 
-local webhookTestBtn = addButton(frames.Webhook, "Send Test Webhook", function()
+    local webhookTestBtn = addButton(frames.Webhook, "Send Test Webhook", function()
     pcall(function() sendWebhook("Test from DonateToPlayers UI") end)
 end)
 
--- Server hop core functions
-local function pickRandomCandidates(list, maxCount)
+    -- Server hop core functions
+    local function pickRandomCandidates(list, maxCount)
     local out = {}
     local n = math.min(#list, maxCount)
     for i=1,n do
@@ -1024,7 +1053,7 @@ local function pickRandomCandidates(list, maxCount)
     return out
 end
 
-function serverHopNow(immediate)
+    function serverHopNow(immediate)
     local placeId = tostring(HOP_PLACE_ID or game.PlaceId)
     local servers = {}
     -- Loop until we successfully teleport
@@ -1099,8 +1128,8 @@ function serverHopNow(immediate)
     end
 end
 
--- Auto-hop loop (checks SETTINGS.autoServerHop)
-task.spawn(function()
+    -- Auto-hop loop (checks SETTINGS.autoServerHop)
+    task.spawn(function()
     while true do
         if SETTINGS.autoServerHop then
             local mins = math.max(0.1, (SETTINGS.serverStayMinutes or 5))
@@ -1112,33 +1141,33 @@ task.spawn(function()
     end
 end)
 
--- Dragging logic (drag window by titleBar)
-local dragging = false
-local dragStart = Vector2.new()
-local startPos = window.Position
+    -- Dragging logic (drag window by titleBar)
+    local dragging = false
+    local dragStart = Vector2.new()
+    local startPos = window.Position
 
-titleBar.InputBegan:Connect(function(input)
+    titleBar.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
         dragging = true
         dragStart = input.Position
         startPos = window.Position
     end
 end)
-UserInputService.InputChanged:Connect(function(input)
+    UserInputService.InputChanged:Connect(function(input)
     if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
         local delta = input.Position - dragStart
         local abs = {x = (startPos.X.Offset + delta.X), y = (startPos.Y.Offset + delta.Y)}
         window.Position = UDim2.new(startPos.X.Scale, abs.x, startPos.Y.Scale, abs.y)
     end
 end)
-UserInputService.InputEnded:Connect(function(input)
+    UserInputService.InputEnded:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
         dragging = false
     end
 end)
 
--- Make UI scale-friendly on resize
-local function onResize()
+    -- Make UI scale-friendly on resize
+    local function onResize()
     local screenSize = workspace.CurrentCamera.ViewportSize
     if screenSize.X < 700 then
         window.Size = UDim2.new(0.96, 0, 0.9, 0)
@@ -1146,7 +1175,21 @@ local function onResize()
         window.Size = UDim2.new(0.36, 0, 0.56, 0)
     end
 end
-RunService.Heartbeat:Connect(onResize)
-onResize()
+    RunService.Heartbeat:Connect(onResize)
+    onResize()
 
-print("donatetoplayers UI loaded")
+    getgenv().DonateToPlayers_UIReady = true
+    print("donatetoplayers UI loaded")
+end
+
+buildMainUI()
+
+LocalPlayer.CharacterAdded:Connect(function()
+    task.wait(0.8)
+    if not PlayerGui:FindFirstChild("DonateToPlayersUI") then
+        buildMainUI()
+    end
+    if getgenv().DonateToPlayers_BeginAutoClaim then
+        getgenv().DonateToPlayers_BeginAutoClaim()
+    end
+end)
