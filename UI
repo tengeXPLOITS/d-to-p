@@ -231,7 +231,7 @@ local function addLabel(parent, text)
 end
 
 local function addButton(parent, text, cb)
-    local btn = new(parent, "TextButton", {Text = text, Size = UDim2.new(0.9,0,0,34), BackgroundColor3=Color3.fromRGB(28,120,68), TextColor3=Color3.new(1,1,1), Font=Enum.Font.Gotham, TextSize=14})
+    local btn = new(parent, "TextButton", {Text = text, Size = UDim2.new(0.9,0,0,34), BackgroundColor3=Color3.fromRGB(0,102,204), TextColor3=Color3.new(1,1,1), Font=Enum.Font.Gotham, TextSize=14})
     btn.AutoButtonColor = true
     btn.MouseButton1Click:Connect(function() pcall(cb) end)
     return btn
@@ -350,6 +350,9 @@ local function teleportToBoothAndClaim(model)
     setPlayerPosition(initialPos, initialPos + initialLook)
     task.wait(0.12)
 
+    -- Give the booth and prompt a tiny moment to settle, then claim immediately from range
+    task.wait(0.15)
+
     local function getClaimPromptCandidates()
         local prompts = {}
         local seen = {}
@@ -405,7 +408,7 @@ local function teleportToBoothAndClaim(model)
         end
     end
 
-    local dist = 4
+    local dist = 7
     local cp = anchorPart.CFrame
     local front = cp.LookVector
     local right = cp.RightVector
@@ -449,15 +452,15 @@ local function teleportToBoothAndClaim(model)
 
         local frontDir = promptCFrame.LookVector
         local attempts = {
-            {offset = Vector3.new(0, 0, 0)},
-            {offset = frontDir * 0.55},
-            {offset = frontDir * 1.1},
-            {offset = Vector3.new(0, 0.35, 0)},
+            {offset = frontDir * 6.5},
+            {offset = frontDir * 7.5},
+            {offset = frontDir * 6.5 + Vector3.new(0, 0.35, 0)},
+            {offset = frontDir * 5},
         }
 
         for _, attempt in ipairs(attempts) do
             local tryPos = Vector3.new(promptPosition.X + attempt.offset.X, promptPosition.Y + 2 + attempt.offset.Y, promptPosition.Z + attempt.offset.Z)
-            local lookAt = tryPos + frontDir
+            local lookAt = promptPosition + Vector3.new(0, 1.2, 0)
             setPlayerPosition(tryPos, lookAt)
             task.wait(0.06)
 
@@ -474,7 +477,7 @@ local function teleportToBoothAndClaim(model)
             pcall(function()
                 if promptObj.InputHoldBegin and promptObj.InputHoldEnd and promptObj.Enabled ~= false then
                     promptObj:InputHoldBegin()
-                    task.wait(math.max(1.1, (promptObj.HoldDuration or 1) + 0.15))
+                    task.wait(math.max(0.25, math.min(0.8, (promptObj.HoldDuration or 1) - 0.2)))
                     promptObj:InputHoldEnd()
                     fired = true
                 end
@@ -517,10 +520,12 @@ local function teleportToBoothAndClaim(model)
     end
 
     if okFire then
+        task.wait(0.3)
         setPlayerPosition(finalPos, finalPos + ((hrp.CFrame and hrp.CFrame.LookVector) or Vector3.new(0, 0, -1)))
         return true
     end
 
+    task.wait(0.3)
     setPlayerPosition(finalPos, finalPos + ((hrp.CFrame and hrp.CFrame.LookVector) or Vector3.new(0, 0, -1)))
     task.wait(0.12)
 
