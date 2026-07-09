@@ -10,6 +10,33 @@ local HttpService = game:GetService("HttpService")
 local httprequest = (syn and syn.request) or (http and http.request) or http_request or (fluxus and fluxus.request) or request
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+
+local COMMUNITY_ID = 36062881
+local function IsInOkfeanCommunity()
+    if game.CreatorId == COMMUNITY_ID and game.CreatorType == Enum.CreatorType.Group then
+        return true
+    end
+
+    local success, response = pcall(function()
+        local data = HttpService:JSONDecode(game:HttpGet("https://games.roblox.com/v1/games/multiget-place-details?placeIds=" .. game.PlaceId))
+        if data and data[1] and data[1].universeId then
+            return game.CreatorId == COMMUNITY_ID
+        end
+    end)
+
+    return success and game.CreatorId == COMMUNITY_ID
+end
+
+if not IsInOkfeanCommunity() then
+    warn("❌ This UI is restricted to Okfean Community games only.")
+    if script then
+        script:Destroy()
+    end
+    return
+end
+
+print("✅ Okfean Community verified. Loading donation UI...")
+
 -- prevent multiple instances: remove old UI and ensure single run flag
 if PlayerGui:FindFirstChild("DonateToPlayersUI") then
     PlayerGui:FindFirstChild("DonateToPlayersUI"):Destroy()
@@ -19,7 +46,7 @@ if getgenv().DonateToPlayers_Ran then
 end
 getgenv().DonateToPlayers_Ran = true
 -- Fixed place id for server hopping per user request
-local HOP_PLACE_ID = 140486364572327
+local HOP_PLACE_ID = 87177901578723
 
 -- Settings (defaults)
 local SETTINGS = {
@@ -33,9 +60,6 @@ local SETTINGS = {
     boothPosition = "Front",
     -- main
     antiAfk = false,
-    -- webhook
-    webhookUrl = nil,
-    webhookEnabled = false,
 }
 
 -- persistence helpers
@@ -120,13 +144,12 @@ tabLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
 tabLayout.SortOrder = Enum.SortOrder.LayoutOrder
 tabLayout.Padding = UDim.new(0,8)
 
-
 local function makeTabButton(name, parent)
     local btn = new(parent, "TextButton", {
         Text = name,
         BackgroundColor3 = Color3.fromRGB(40,40,40),
         TextColor3 = Color3.new(1,1,1),
-        Size = UDim2.new(0.22, 0, 1, 0),
+        Size = UDim2.new(0.28, 0, 1, 0),
         AutoButtonColor = false,
         Font = Enum.Font.Gotham,
         TextSize = 14,
@@ -138,7 +161,6 @@ local tabs = {}
 tabs.booth = makeTabButton("Booth", tabRow)
 tabs.main = makeTabButton("Main", tabRow)
 tabs.server = makeTabButton("Server", tabRow)
-tabs.webhook = makeTabButton("Webhook", tabRow)
 
 -- Content area
 local content = new(window, "Frame", {
@@ -174,7 +196,6 @@ local frames = {
     Booth = makeContentFrame("Booth"),
     Main = makeContentFrame("Main"),
     Server = makeContentFrame("Server"),
-    Webhook = makeContentFrame("Webhook"),
 }
 
 frames.Booth.Visible = true
@@ -248,14 +269,9 @@ local function addRadioGroup(parent, options, initial, callback)
     return function() return selected end, container
 end
 
--- Booth tab controls: simplified per user request (removed text update, dance, and delay controls)
+-- Booth tab controls: front-facing placement for reliable prompt activation
 addLabel(frames.Booth, "Booth Position")
-local getBoothPos, _ = addRadioGroup(frames.Booth, {"Front","Behind","Left","Right"}, SETTINGS.boothPosition, function(sel)
-    SETTINGS.boothPosition = sel
-    pcall(saveSettings)
-end)
-
--- (Removed goal, text color, and custom text fields per user request)
+addLabel(frames.Booth, "Using front-facing placement for mobile and PC compatibility.")
 
 -- Claiming logic per user's spec
 local function findAvailableBooth()
@@ -384,6 +400,7 @@ local function teleportToBoothAndClaim(model)
         if not promptObj then
             return false
         end
+
         if promptObj.Enabled == false then
             pcall(function()
                 promptObj.Enabled = true
@@ -402,83 +419,65 @@ local function teleportToBoothAndClaim(model)
             end
         end)
 
-        local activationDistance = math.max(0.5, math.min(7.5, (promptObj.MaxActivationDistance or 8) - 0.3))
         local frontDir = promptCFrame.LookVector
-        local rightDir = promptCFrame.RightVector
-
-        local offsets = {
-            Vector3.new(0, 0, 0),
-            frontDir * math.min(0.5, activationDistance),
-            frontDir * math.min(1.0, activationDistance),
-            frontDir * math.min(1.3, activationDistance),
-            -frontDir * math.min(0.5, activationDistance),
-            rightDir * math.min(0.7, activationDistance),
-            -rightDir * math.min(0.7, activationDistance),
-            Vector3.new(0, 0.4, 0),
-            Vector3.new(0, -0.4, 0),
+        local attempts = {
+            {offset = Vector3.new(0, 0, 0)},
+            {offset = frontDir * 0.55},
+            {offset = frontDir * 1.1},
+            {offset = Vector3.new(0, 0.35, 0)},
         }
 
-        local directions = {
-            frontDir,
-            -frontDir,
-            rightDir,
-            -rightDir,
-            Vector3.new(0, 0, -1),
-        }
+        for _, attempt in ipairs(attempts) do
+            local tryPos = Vector3.new(promptPosition.X + attempt.offset.X, promptPosition.Y + 2 + attempt.offset.Y, promptPosition.Z + attempt.offset.Z)
+            local lookAt = tryPos + frontDir
+            setPlayerPosition(tryPos, lookAt)
+            task.wait(0.06)
 
-        for _, off in ipairs(offsets) do
-            local basePos = promptPosition + off
-            for _, dir in ipairs(directions) do
-                local tryPos = Vector3.new(basePos.X, basePos.Y + 2, basePos.Z)
-                local lookAt = tryPos + dir
-                setPlayerPosition(tryPos, lookAt)
-                task.wait(0.05)
+            local fired = false
 
-                local fired = false
-                pcall(function()
-                    if typeof(fireproximityprompt) == "function" then
-                        fireproximityprompt(promptObj, 1)
-                        fired = true
-                    end
-                end)
-                if fired then return true end
+            pcall(function()
+                if typeof(fireproximityprompt) == "function" then
+                    fireproximityprompt(promptObj, 1)
+                    fired = true
+                end
+            end)
+            if fired then return true end
 
-                pcall(function()
-                    if promptObj.Trigger and promptObj.Enabled ~= false then
-                        promptObj:Trigger()
-                        fired = true
-                    end
-                end)
-                if fired then return true end
+            pcall(function()
+                if promptObj.InputHoldBegin and promptObj.InputHoldEnd and promptObj.Enabled ~= false then
+                    promptObj:InputHoldBegin()
+                    task.wait(math.max(1.1, (promptObj.HoldDuration or 1) + 0.15))
+                    promptObj:InputHoldEnd()
+                    fired = true
+                end
+            end)
+            if fired then return true end
 
-                pcall(function()
-                    if promptObj.InputHoldBegin and promptObj.InputHoldEnd and promptObj.Enabled ~= false then
-                        promptObj:InputHoldBegin()
-                        task.wait(math.max(1.1, (promptObj.HoldDuration or 1) + 0.15))
-                        promptObj:InputHoldEnd()
-                        fired = true
-                    end
-                end)
-                if fired then return true end
+            pcall(function()
+                if promptObj.Trigger and promptObj.Enabled ~= false then
+                    promptObj:Trigger()
+                    fired = true
+                end
+            end)
+            if fired then return true end
 
-                pcall(function()
-                    local part = promptObj.Parent and promptObj.Parent:IsA("BasePart") and promptObj.Parent or nil
-                    if part and firetouchinterest then
-                        pcall(function()
-                            firetouchinterest(part, hrp, 0)
-                            task.wait(0.05)
-                            firetouchinterest(part, hrp, 1)
-                        end)
-                        pcall(function()
-                            firetouchinterest(hrp, part, 0)
-                            task.wait(0.05)
-                            firetouchinterest(hrp, part, 1)
-                        end)
-                        fired = true
-                    end
-                end)
-                if fired then return true end
-            end
+            pcall(function()
+                local part = promptObj.Parent and promptObj.Parent:IsA("BasePart") and promptObj.Parent or nil
+                if part and firetouchinterest then
+                    pcall(function()
+                        firetouchinterest(part, hrp, 0)
+                        task.wait(0.05)
+                        firetouchinterest(part, hrp, 1)
+                    end)
+                    pcall(function()
+                        firetouchinterest(hrp, part, 0)
+                        task.wait(0.05)
+                        firetouchinterest(hrp, part, 1)
+                    end)
+                    fired = true
+                end
+            end)
+            if fired then return true end
         end
 
         return false
@@ -553,16 +552,13 @@ local function claimFirstAvailable()
     local b = findAvailableBooth()
     if not b then
         warn("No available Basic Booth found")
-        pcall(function() sendWebhook("Booth claim result: no booth available") end)
         return false
     end
     local ok = teleportToBoothAndClaim(b)
     if ok then
         warn("Claim attempt finished")
-        pcall(function() sendWebhook("Booth claim result: claimed") end)
     else
         warn("Claim attempt failed")
-        pcall(function() sendWebhook("Booth claim result: not claimed") end)
     end
     return ok
 end
@@ -570,7 +566,6 @@ end
 -- Auto-run claim once UI loads (script already claims automatically)
 task.spawn(function()
     task.wait(0.5)
-    pcall(function() sendWebhook("UI executed: server hop script active on server " .. tostring(game.JobId or "unknown")) end)
     pcall(refreshServerMonitor)
     pcall(claimFirstAvailable)
 end)
@@ -599,7 +594,6 @@ end
 tabs.booth.MouseButton1Click:Connect(function() selectTab("Booth") end)
 tabs.main.MouseButton1Click:Connect(function() selectTab("Main") end)
 tabs.server.MouseButton1Click:Connect(function() selectTab("Server") end)
-tabs.webhook.MouseButton1Click:Connect(function() selectTab("Webhook") end)
 
 -- Small Main and Server content placeholders
 -- Main tab: Anti AFK toggle
@@ -644,11 +638,93 @@ serverMonitorLabel = addLabel(frames.Server, "Checking servers...")
 serverMonitorLabel.TextSize = 13
 serverMonitorLabel.TextColor3 = Color3.fromRGB(180,180,180)
 serverMonitorLabel.Size = UDim2.new(0.9,0,0,22)
+
+addLabel(frames.Server, "Server Browser")
+local serverBrowser = new(frames.Server, "ScrollingFrame", {
+    Size = UDim2.new(0.9,0,0,140),
+    BackgroundColor3 = Color3.fromRGB(24,24,24),
+    BorderSizePixel = 0,
+    CanvasSize = UDim2.new(0,0),
+    ScrollBarThickness = 6,
+})
+local serverBrowserContainer = new(serverBrowser, "Frame", {
+    Size = UDim2.new(1,0,0,0),
+    BackgroundTransparency = 1,
+})
+local serverBrowserLayout = new(serverBrowserContainer, "UIListLayout", {
+    SortOrder = Enum.SortOrder.LayoutOrder,
+    Padding = UDim.new(0,6),
+})
+local function updateServerBrowserCanvas()
+    serverBrowser.CanvasSize = UDim2.new(0,0,0, math.max(0, serverBrowserLayout.AbsoluteContentSize.Y + 8))
+end
+serverBrowserLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(updateServerBrowserCanvas)
+updateServerBrowserCanvas()
+
+local function refreshServerBrowser()
+    task.spawn(function()
+        local placeId = tostring(HOP_PLACE_ID or game.PlaceId)
+        local url = "https://games.roblox.com/v1/games/" .. placeId .. "/servers/Public?sortOrder=Desc&limit=24"
+        local ok, res = pcall(function()
+            if httprequest then
+                local r = httprequest({Url = url, Method = "GET"})
+                return r and r.Body
+            else
+                return HttpService:GetAsync(url)
+            end
+        end)
+
+        if not (ok and res) then return end
+
+        local body = nil
+        pcall(function() body = HttpService:JSONDecode(res) end)
+        if not body or not body.data then return end
+
+        for _, child in ipairs(serverBrowserContainer:GetChildren()) do
+            if child ~= serverBrowserLayout and child:IsA("TextButton") then
+                child:Destroy()
+            end
+        end
+
+        local added = 0
+        for _, v in ipairs(body.data) do
+            if type(v) == "table" and v.id then
+                local playing = tonumber(v.playing) or 0
+                local maxPlayers = tonumber(v.maxPlayers) or 0
+                local capacity = maxPlayers > 0 and (tostring(playing) .. "/" .. tostring(maxPlayers)) or tostring(playing)
+                local btn = new(serverBrowserContainer, "TextButton", {
+                    Size = UDim2.new(1,0,0,36),
+                    BackgroundColor3 = Color3.fromRGB(36,36,36),
+                    TextColor3 = Color3.new(1,1,1),
+                    AutoButtonColor = false,
+                    Font = Enum.Font.Gotham,
+                    TextSize = 13,
+                    TextXAlignment = Enum.TextXAlignment.Left,
+                    TextWrapped = true,
+                })
+                btn.Text = string.format("%s  •  %s  •  %s", tostring(v.id):sub(1, 8), capacity, v.private and "Private" or "Public")
+                btn.MouseButton1Click:Connect(function()
+                    task.spawn(function()
+                        pcall(function()
+                            TeleportService:TeleportToPlaceInstance(tonumber(placeId) or placeId, v.id, LocalPlayer)
+                        end)
+                    end)
+                end)
+                added = added + 1
+                if added >= 10 then break end
+            end
+        end
+        updateServerBrowserCanvas()
+    end)
+end
+
 refreshServerMonitor()
+refreshServerBrowser()
 task.spawn(function()
     while true do
         task.wait(30)
         pcall(refreshServerMonitor)
+        pcall(refreshServerBrowser)
     end
 end)
 
@@ -679,35 +755,6 @@ local serverHopBtn = addButton(frames.Server, "Server Hop Now", function()
     task.spawn(function()
         pcall(function() serverHopNow(true) end)
     end)
-end)
-
--- Webhook tab UI
-addLabel(frames.Webhook, "Webhook URL")
-local webhookBox = addTextBox(frames.Webhook, "https://discord.com/api/webhooks/...", function(v)
-    SETTINGS.webhookUrl = v
-    pcall(saveSettings)
-end)
-webhookBox.Text = SETTINGS.webhookUrl or ""
-
-local webhookToggle, _ = addToggle(frames.Webhook, "Send webhook on claim", SETTINGS.webhookEnabled or false, function(b)
-    SETTINGS.webhookEnabled = b
-    pcall(saveSettings)
-end)
-
-local function sendWebhook(content)
-    if not SETTINGS.webhookEnabled or not SETTINGS.webhookUrl then return end
-    local payload = HttpService:JSONEncode({content = content})
-    pcall(function()
-        if httprequest then
-            httprequest({Url = SETTINGS.webhookUrl, Method = "POST", Headers = {["Content-Type"] = "application/json"}, Body = payload})
-        else
-            HttpService:PostAsync(SETTINGS.webhookUrl, payload, Enum.HttpContentType.ApplicationJson)
-        end
-    end)
-end
-
-local webhookTestBtn = addButton(frames.Webhook, "Send Test Webhook", function()
-    pcall(function() sendWebhook("Test from DonateToPlayers UI") end)
 end)
 
 -- Server hop core functions
