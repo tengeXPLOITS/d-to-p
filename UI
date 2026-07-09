@@ -249,7 +249,7 @@ end
 local function addToggle(parent, labelText, initial, callback)
     local container = new(parent, "Frame", {Size = UDim2.new(0.9,0,0,34), BackgroundTransparency = 1})
     local lbl = new(container, "TextLabel", {Text = labelText, BackgroundTransparency = 1, TextColor3 = Color3.new(1,1,1), Font = Enum.Font.Gotham, TextSize = 14, Position = UDim2.new(0,0,0,2), Size = UDim2.new(0.8,0,1,0), TextXAlignment = Enum.TextXAlignment.Left})
-    local box = new(container, "TextButton", {Text = initial and "✓" or "", BackgroundColor3 = Color3.fromRGB(34,139,34), TextColor3 = Color3.new(1,1,1), Size = UDim2.new(0,28,0,28), Position = UDim2.new(1,-28,0,3), AutoButtonColor = true, Font = Enum.Font.Gotham, TextSize = 18})
+    local box = new(container, "TextButton", {Text = initial and "✓" or "", BackgroundColor3 = Color3.fromRGB(28,73,140), TextColor3 = Color3.new(1,1,1), Size = UDim2.new(0,28,0,28), Position = UDim2.new(1,-28,0,3), AutoButtonColor = true, Font = Enum.Font.Gotham, TextSize = 18})
     local toggled = initial
     box.MouseButton1Click:Connect(function()
         toggled = not toggled
@@ -282,14 +282,14 @@ local function addRadioGroup(parent, options, initial, callback)
         btn.MouseButton1Click:Connect(function()
             selected = opt
             for k, b in pairs(buttons) do
-                b.BackgroundColor3 = (k == selected) and Color3.fromRGB(34,139,34) or Color3.fromRGB(60,60,60)
+                b.BackgroundColor3 = (k == selected) and Color3.fromRGB(28,73,140) or Color3.fromRGB(60,60,60)
             end
             pcall(callback, selected)
         end)
     end
     -- initialize visuals
     for k, b in pairs(buttons) do
-        b.BackgroundColor3 = (k == initial) and Color3.fromRGB(34,139,34) or Color3.fromRGB(60,60,60)
+        b.BackgroundColor3 = (k == initial) and Color3.fromRGB(28,73,140) or Color3.fromRGB(60,60,60)
     end
     return function() return selected end, container
 end
@@ -350,8 +350,8 @@ local function teleportToBoothAndClaim(model)
     setPlayerPosition(initialPos, initialPos + initialLook)
     task.wait(0.12)
 
-    -- Give the booth and prompt a tiny moment to settle, then claim immediately from range
-    task.wait(0.15)
+    -- Give the booth and prompt a short moment to settle before claiming from range
+    task.wait(3)
 
     local function getClaimPromptCandidates()
         local prompts = {}
@@ -598,7 +598,7 @@ end
 
 -- Auto-run claim once UI loads (script already claims automatically)
 task.spawn(function()
-    task.wait(0.5)
+    task.wait(4)
     pcall(refreshServerMonitor)
     pcall(claimFirstAvailable)
 end)
@@ -936,4 +936,4 @@ end
 RunService.Heartbeat:Connect(onResize)
 onResize()
 
-print("donatetoplayers UI loaded")
+print("HAaland 4 the win!!!!")
