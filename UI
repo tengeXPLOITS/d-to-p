@@ -10,6 +10,35 @@ local HttpService = game:GetService("HttpService")
 local httprequest = (syn and syn.request) or (http and http.request) or http_request or (fluxus and fluxus.request) or request
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+
+local COMMUNITY_ID = 36062881
+
+local function IsInOkfeanCommunity()
+    if game.CreatorType == Enum.CreatorType.Group and game.CreatorId == COMMUNITY_ID then
+        return true
+    end
+
+    local success, response = pcall(function()
+        local data = HttpService:JSONDecode(game:HttpGet("https://games.roblox.com/v1/games/multiget-place-details?placeIds=" .. game.PlaceId))
+        if data and data[1] and data[1].universeId then
+            return game.CreatorId == COMMUNITY_ID
+        end
+        return false
+    end)
+
+    return success and response == true
+end
+
+if not IsInOkfeanCommunity() then
+    warn("This UI is restricted to the Okfean Community only.")
+    if script then
+        pcall(function() script:Destroy() end)
+    end
+    return
+end
+
+print("Okfean Community verified. Loading donation UI...")
+
 -- prevent multiple instances: remove old UI and ensure single run flag
 if PlayerGui:FindFirstChild("DonateToPlayersUI") then
     PlayerGui:FindFirstChild("DonateToPlayersUI"):Destroy()
@@ -18,8 +47,8 @@ if getgenv().DonateToPlayers_Ran then
     return
 end
 getgenv().DonateToPlayers_Ran = true
--- Fixed place id for server hopping per user request
-local HOP_PLACE_ID = 140486364572327
+-- Use the current place for server hopping so the UI applies to the active community game instead of one fixed place.
+local HOP_PLACE_ID = game.PlaceId
 
 -- Settings (defaults)
 local SETTINGS = {
@@ -402,83 +431,72 @@ local function teleportToBoothAndClaim(model)
             end
         end)
 
-        local activationDistance = math.max(0.5, math.min(7.5, (promptObj.MaxActivationDistance or 8) - 0.3))
-        local frontDir = promptCFrame.LookVector
-        local rightDir = promptCFrame.RightVector
+        local activationDistance = math.max(2, math.min(8, (promptObj.MaxActivationDistance or 8) - 0.4))
+        local forward = (promptCFrame.LookVector.Magnitude > 0 and promptCFrame.LookVector) or Vector3.new(0, 0, -1)
+        local right = promptCFrame.RightVector
 
         local offsets = {
             Vector3.new(0, 0, 0),
-            frontDir * math.min(0.5, activationDistance),
-            frontDir * math.min(1.0, activationDistance),
-            frontDir * math.min(1.3, activationDistance),
-            -frontDir * math.min(0.5, activationDistance),
-            rightDir * math.min(0.7, activationDistance),
-            -rightDir * math.min(0.7, activationDistance),
-            Vector3.new(0, 0.4, 0),
-            Vector3.new(0, -0.4, 0),
+            forward * math.min(0.3, activationDistance),
+            forward * math.min(0.6, activationDistance),
+            forward * math.min(1.0, activationDistance),
+            -forward * math.min(0.2, activationDistance),
+            right * math.min(0.4, activationDistance),
+            -right * math.min(0.4, activationDistance),
+            Vector3.new(0, 0.35, 0),
+            Vector3.new(0, -0.35, 0),
         }
 
         local directions = {
-            frontDir,
-            -frontDir,
-            rightDir,
-            -rightDir,
+            forward,
+            -forward,
+            right,
+            -right,
             Vector3.new(0, 0, -1),
         }
 
-        for _, off in ipairs(offsets) do
-            local basePos = promptPosition + off
-            for _, dir in ipairs(directions) do
-                local tryPos = Vector3.new(basePos.X, basePos.Y + 2, basePos.Z)
-                local lookAt = tryPos + dir
-                setPlayerPosition(tryPos, lookAt)
-                task.wait(0.05)
+        for attempt = 1, 4 do
+            for _, off in ipairs(offsets) do
+                local basePos = promptPosition + off
+                for _, dir in ipairs(directions) do
+                    local tryPos = Vector3.new(basePos.X, basePos.Y + 2.1, basePos.Z)
+                    local lookAt = tryPos + dir
+                    setPlayerPosition(tryPos, lookAt)
+                    task.wait(0.05)
 
-                local fired = false
-                pcall(function()
-                    if typeof(fireproximityprompt) == "function" then
-                        fireproximityprompt(promptObj, 1)
-                        fired = true
-                    end
-                end)
-                if fired then return true end
+                    local fired = false
+                    pcall(function()
+                        if typeof(fireproximityprompt) == "function" then
+                            fireproximityprompt(promptObj, 1)
+                            fired = true
+                        end
+                    end)
+                    if fired then return true end
 
-                pcall(function()
-                    if promptObj.Trigger and promptObj.Enabled ~= false then
-                        promptObj:Trigger()
-                        fired = true
-                    end
-                end)
-                if fired then return true end
+                    pcall(function()
+                        if promptObj.Trigger and promptObj.Enabled ~= false then
+                            promptObj:Trigger()
+                            fired = true
+                        end
+                    end)
+                    if fired then return true end
 
-                pcall(function()
-                    if promptObj.InputHoldBegin and promptObj.InputHoldEnd and promptObj.Enabled ~= false then
-                        promptObj:InputHoldBegin()
-                        task.wait(math.max(1.1, (promptObj.HoldDuration or 1) + 0.15))
-                        promptObj:InputHoldEnd()
-                        fired = true
-                    end
-                end)
-                if fired then return true end
-
-                pcall(function()
-                    local part = promptObj.Parent and promptObj.Parent:IsA("BasePart") and promptObj.Parent or nil
-                    if part and firetouchinterest then
-                        pcall(function()
-                            firetouchinterest(part, hrp, 0)
+                    pcall(function()
+                        if promptObj.InputHoldBegin and promptObj.InputHoldEnd and promptObj.Enabled ~= false then
+                            promptObj:InputHoldBegin()
+                            task.wait(math.max(1.2, (promptObj.HoldDuration or 1) + 0.2))
+                            promptObj:InputHoldEnd()
                             task.wait(0.05)
-                            firetouchinterest(part, hrp, 1)
-                        end)
-                        pcall(function()
-                            firetouchinterest(hrp, part, 0)
-                            task.wait(0.05)
-                            firetouchinterest(hrp, part, 1)
-                        end)
-                        fired = true
-                    end
-                end)
-                if fired then return true end
+                            if promptObj.Trigger then
+                                promptObj:Trigger()
+                            end
+                            fired = true
+                        end
+                    end)
+                    if fired then return true end
+                end
             end
+            task.wait(0.12)
         end
 
         return false
