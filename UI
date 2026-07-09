@@ -92,6 +92,17 @@ end
 
 loadSettings()
 
+local function new(parent, class, props)
+    local obj = Instance.new(class)
+    if parent then obj.Parent = parent end
+    if props then
+        for k, v in pairs(props) do
+            pcall(function() obj[k] = v end)
+        end
+    end
+    return obj
+end
+
 local function sendDanceCommand()
     local choice = SETTINGS.danceChoice or "None"
     if not choice or choice == "None" then
@@ -99,13 +110,33 @@ local function sendDanceCommand()
     end
 
     local msg = "/e " .. choice
+    local sent = false
+
     pcall(function()
         local chatEvents = game:GetService("ReplicatedStorage"):FindFirstChild("DefaultChatSystemChatEvents")
         if chatEvents and chatEvents:FindFirstChild("SayMessageRequest") then
             chatEvents.SayMessageRequest:FireServer(msg, "All")
-            return
+            sent = true
         end
+    end)
 
+    if sent then
+        return
+    end
+
+    pcall(function()
+        local playersService = game:GetService("Players")
+        if playersService and playersService.Chat then
+            playersService:Chat(msg)
+            sent = true
+        end
+    end)
+
+    if sent then
+        return
+    end
+
+    pcall(function()
         local textChatService = game:GetService("TextChatService")
         if textChatService and textChatService.SendMessage then
             textChatService:SendMessage(msg, Enum.TextChannel.All)
@@ -231,18 +262,6 @@ local function refreshServerBrowser()
         local empty = new(serverBrowserList, "Frame", {Size = UDim2.new(1, 0, 0, 28), BackgroundTransparency = 1})
         local label = new(empty, "TextLabel", {Text = "No public servers were returned.", BackgroundTransparency = 1, TextColor3 = Color3.fromRGB(220, 220, 220), Font = Enum.Font.Gotham, TextSize = 13, Size = UDim2.new(1, 0, 1, 0), TextXAlignment = Enum.TextXAlignment.Left})
     end
-end
-
--- Helpers
-local function new(parent, class, props)
-    local obj = Instance.new(class)
-    if parent then obj.Parent = parent end
-    if props then
-        for k, v in pairs(props) do
-            pcall(function() obj[k] = v end)
-        end
-    end
-    return obj
 end
 
 -- Build UI
@@ -748,7 +767,7 @@ local function claimFirstAvailable()
     if ok then
         warn("Claim attempt finished")
         task.spawn(function()
-            task.wait(0.2)
+            task.wait(0.5)
             sendDanceCommand()
         end)
         pcall(function() sendWebhook("Booth claim result: claimed") end)
