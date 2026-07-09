@@ -12,6 +12,16 @@ local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 
 local COMMUNITY_ID = 36062881
+local UI_NAME = "DonateToPlayersUI"
+local UI_SOURCE_URL = "https://raw.githubusercontent.com/tengeXPLOITS/d-to-p/refs/heads/main/UI"
+
+local function getUIRoot()
+    return PlayerGui:FindFirstChild(UI_NAME)
+end
+
+local function getExecutionKey()
+    return tostring(LocalPlayer.UserId) .. ":" .. tostring(game.JobId)
+end
 local function IsInOkfeanCommunity()
     if game.CreatorId == COMMUNITY_ID and game.CreatorType == Enum.CreatorType.Group then
         return true
@@ -37,14 +47,19 @@ end
 
 print("✅ Okfean Community verified. Loading donation UI...")
 
--- prevent multiple instances: remove old UI and ensure single run flag
-if PlayerGui:FindFirstChild("DonateToPlayersUI") then
-    PlayerGui:FindFirstChild("DonateToPlayersUI"):Destroy()
-end
-if getgenv().DonateToPlayers_Ran then
+-- prevent duplicate UI instances and allow one run per player/session
+local existingUI = getUIRoot()
+local executionKey = getExecutionKey()
+if existingUI and getgenv().DonateToPlayers_RanKey == executionKey then
     return
 end
-getgenv().DonateToPlayers_Ran = true
+if existingUI then
+    existingUI:Destroy()
+end
+if getgenv().DonateToPlayers_RanKey == executionKey then
+    return
+end
+getgenv().DonateToPlayers_RanKey = executionKey
 -- Fixed place id for server hopping per user request
 local HOP_PLACE_ID = 87177901578723
 
@@ -99,7 +114,7 @@ local function new(parent, class, props)
 end
 
 -- Build UI
-local screen = new(PlayerGui, "ScreenGui", {Name = "DonateToPlayersUI", ResetOnSpawn=false, IgnoreGuiInset=true})
+local screen = new(PlayerGui, "ScreenGui", {Name = UI_NAME, ResetOnSpawn=false, IgnoreGuiInset=true})
 
 -- Window as plain Frame (no squiggle image)
 local window = new(screen, "Frame", {
@@ -111,11 +126,11 @@ local window = new(screen, "Frame", {
     BorderSizePixel = 0,
 })
 
--- Title bar (green strip) used for drag
+-- Title bar used for drag
 local titleBar = new(window, "Frame", {
     Name = "TitleBar",
     Size = UDim2.new(1,0,0,36),
-    BackgroundColor3 = Color3.fromRGB(2, 160, 79),
+    BackgroundColor3 = Color3.fromRGB(0, 120, 215),
 })
 local title = new(titleBar, "TextLabel", {
     Text = "Donate To Plrs <3",
@@ -202,7 +217,17 @@ frames.Booth.Visible = true
 
 -- Simple control factory
 local function addLabel(parent, text)
-    return new(parent, "TextLabel", {Text=text, BackgroundTransparency=1, TextColor3=Color3.new(1,1,1), Font=Enum.Font.Gotham, TextSize=14, Size=UDim2.new(0.9,0,0,20)})
+    return new(parent, "TextLabel", {
+        Text=text,
+        BackgroundTransparency=1,
+        TextColor3=Color3.new(1,1,1),
+        Font=Enum.Font.Gotham,
+        TextSize=14,
+        Size=UDim2.new(0.95,0,0,24),
+        TextWrapped=true,
+        TextXAlignment=Enum.TextXAlignment.Left,
+        TextYAlignment=Enum.TextYAlignment.Center,
+    })
 end
 
 local function addButton(parent, text, cb)
@@ -271,7 +296,10 @@ end
 
 -- Booth tab controls: front-facing placement for reliable prompt activation
 addLabel(frames.Booth, "Booth Position")
-addLabel(frames.Booth, "Using front-facing placement for mobile and PC compatibility.")
+local boothInfoLabel = addLabel(frames.Booth, "Using front-facing placement for mobile and PC compatibility.")
+boothInfoLabel.Size = UDim2.new(0.95,0,0,36)
+boothInfoLabel.TextWrapped = true
+boothInfoLabel.TextYAlignment = Enum.TextYAlignment.Top
 
 -- Claiming logic per user's spec
 local function findAvailableBooth()
@@ -572,10 +600,31 @@ end)
 
 -- Queue-on-teleport helper for provided UI loadstring
 local function queueLoadOnTeleport()
-    local code = 'loadstring(game:HttpGet("https://raw.githubusercontent.com/tengeXPLOITS/d-to-p/refs/heads/main/UI"))()'
+    if getgenv().DonateToPlayers_QueuedTeleport then
+        return
+    end
+
+    local code = string.format([[
+        repeat task.wait() until game:IsLoaded()
+        local ok, err = pcall(function()
+            local Players = game:GetService("Players")
+            local LocalPlayer = Players.LocalPlayer
+            local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+            local UI_NAME = "DonateToPlayersUI"
+            if PlayerGui:FindFirstChild(UI_NAME) then
+                return
+            end
+            loadstring(game:HttpGet(%q))()
+        end)
+        if not ok then
+            warn(err)
+        end
+    ]], UI_SOURCE_URL)
+
     local q = queue_on_teleport or (syn and syn.queue_on_teleport) or (queue_on_teleport) or (fluxus and fluxus.queue_on_teleport)
     if q then
         pcall(q, code)
+        getgenv().DonateToPlayers_QueuedTeleport = true
         warn("Queued UI loadstring on teleport")
     else
         warn("queue_on_teleport not available in this executor")
@@ -640,27 +689,16 @@ serverMonitorLabel.TextColor3 = Color3.fromRGB(180,180,180)
 serverMonitorLabel.Size = UDim2.new(0.9,0,0,22)
 
 addLabel(frames.Server, "Server Browser")
-local serverBrowser = new(frames.Server, "ScrollingFrame", {
-    Size = UDim2.new(0.9,0,0,140),
+local serverBrowser = new(frames.Server, "Frame", {
+    Size = UDim2.new(0.95,0,0,0),
+    AutomaticSize = Enum.AutomaticSize.Y,
     BackgroundColor3 = Color3.fromRGB(24,24,24),
     BorderSizePixel = 0,
-    CanvasSize = UDim2.new(0,0),
-    ScrollBarThickness = 6,
 })
-local serverBrowserContainer = new(serverBrowser, "Frame", {
-    Size = UDim2.new(1,0,0,0),
-    BackgroundTransparency = 1,
-})
-local serverBrowserLayout = new(serverBrowserContainer, "UIListLayout", {
+local serverBrowserLayout = new(serverBrowser, "UIListLayout", {
     SortOrder = Enum.SortOrder.LayoutOrder,
     Padding = UDim.new(0,6),
 })
-local function updateServerBrowserCanvas()
-    serverBrowser.CanvasSize = UDim2.new(0,0,0, math.max(0, serverBrowserLayout.AbsoluteContentSize.Y + 8))
-end
-serverBrowserLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(updateServerBrowserCanvas)
-updateServerBrowserCanvas()
-
 local function refreshServerBrowser()
     task.spawn(function()
         local placeId = tostring(HOP_PLACE_ID or game.PlaceId)
@@ -680,7 +718,7 @@ local function refreshServerBrowser()
         pcall(function() body = HttpService:JSONDecode(res) end)
         if not body or not body.data then return end
 
-        for _, child in ipairs(serverBrowserContainer:GetChildren()) do
+        for _, child in ipairs(serverBrowser:GetChildren()) do
             if child ~= serverBrowserLayout and child:IsA("TextButton") then
                 child:Destroy()
             end
@@ -692,7 +730,7 @@ local function refreshServerBrowser()
                 local playing = tonumber(v.playing) or 0
                 local maxPlayers = tonumber(v.maxPlayers) or 0
                 local capacity = maxPlayers > 0 and (tostring(playing) .. "/" .. tostring(maxPlayers)) or tostring(playing)
-                local btn = new(serverBrowserContainer, "TextButton", {
+                local btn = new(serverBrowser, "TextButton", {
                     Size = UDim2.new(1,0,0,36),
                     BackgroundColor3 = Color3.fromRGB(36,36,36),
                     TextColor3 = Color3.new(1,1,1),
@@ -714,7 +752,6 @@ local function refreshServerBrowser()
                 if added >= 10 then break end
             end
         end
-        updateServerBrowserCanvas()
     end)
 end
 
