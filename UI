@@ -29,8 +29,8 @@ local function parseNumberValue(value)
 end
 
 local function sendWebhookPayload(payload)
-    if not SETTINGS.webhookUrl or SETTINGS.webhookUrl == "" then
-        return false
+    if not SETTINGS or not SETTINGS.webhookUrl or SETTINGS.webhookUrl == "" then
+        return false, "No webhook URL"
     end
     local body = HttpService:JSONEncode(payload)
     local ok, result = pcall(function()
@@ -41,31 +41,55 @@ local function sendWebhookPayload(payload)
                 Headers = { ["Content-Type"] = "application/json" },
                 Body = body,
             })
-            return res
+            if type(res) == "table" then
+                if res.Success == false then
+                    return false, res.StatusCode or res.StatusMessage or "Request failed"
+                end
+                if res.StatusCode and res.StatusCode >= 400 then
+                    return false, tostring(res.StatusCode)
+                end
+                return true, res
+            end
+            return res ~= nil, res
         else
-            return HttpService:PostAsync(SETTINGS.webhookUrl, body, Enum.HttpContentType.ApplicationJson)
+            local res = HttpService:PostAsync(SETTINGS.webhookUrl, body, Enum.HttpContentType.ApplicationJson)
+            return true, res
         end
     end)
     if not ok then
         warn("Webhook send failed:", result)
+        return false, result
     end
-    return ok
+    local success, detail = result or true, nil
+    if success == false then
+        warn("Webhook send failed:", detail)
+        return false, detail
+    end
+    return true, detail
 end
 
-local function sendWebhookEvent(title, description, fields)
-    if not SETTINGS.webhookUrl or SETTINGS.webhookUrl == "" then
-        return
+local function sendWebhookEvent(title, description, fields, options)
+    if not SETTINGS or not SETTINGS.webhookUrl or SETTINGS.webhookUrl == "" then
+        return false, "No webhook URL"
     end
-    local payload = {
-        embeds = {{
-            title = title,
-            description = description or "",
-            color = 65344,
-            fields = fields or {},
-            timestamp = DateTime.now():ToIsoDate(),
-        }},
+    local embed = {
+        title = title or "Notification",
+        description = description or "",
+        color = (options and options.color) or 65344,
+        fields = fields or {},
+        timestamp = DateTime.now():ToIsoDate(),
     }
-    sendWebhookPayload(payload)
+    if options and options.author then
+        embed.author = options.author
+    end
+    if options and options.footer then
+        embed.footer = options.footer
+    end
+    if options and options.thumbnail then
+        embed.thumbnail = options.thumbnail
+    end
+    local payload = { embeds = { embed } }
+    return sendWebhookPayload(payload)
 end
 
 local function findRaisedStat()
@@ -130,20 +154,28 @@ end
 
 local function notifyDonationChange(amountReceived, currentRaised, currentPending)
     if not amountReceived or amountReceived <= 0 then
-        return
+        return false, "No donation amount"
     end
+    local playerName = tostring(LocalPlayer.Name or "Unknown")
     local fields = {
-        {name = "Amount Received", value = tostring(amountReceived), inline = true},
-        {name = "Raised Total", value = tostring(currentRaised or "Unknown"), inline = true},
-        {name = "Pending Robux", value = tostring(currentPending or "Unknown"), inline = true},
+        {name = "Robux Received", value = "**" .. tostring(amountReceived) .. "**", inline = true},
+        {name = "Raised Total", value = "**" .. tostring(currentRaised or "Unknown") .. "**", inline = true},
+        {name = "Pending Robux", value = "**" .. tostring(currentPending or "Unknown") .. "**", inline = true},
     }
-    sendWebhookEvent("Donation Received", "A donation has been detected.", fields)
+    return sendWebhookEvent("Donation Received", "**" .. playerName .. "** got donated 💸", fields, {
+        color = 0x00A2FF,
+        author = {name = "DonateToPlayers"},
+        footer = {text = "Pending R$ may not be accurate, so check in-game pls!"},
+    })
 end
 
 local function notifyScriptExecution()
-    sendWebhookEvent("Donate UI Executed", "The donate UI script has been executed. This counts as a server hop.", {
+    return sendWebhookEvent("Donate UI Executed", "The donate UI script has been executed. This counts as a server hop.", {
         {name = "Player", value = tostring(LocalPlayer.Name), inline = true},
         {name = "Place", value = tostring(game.PlaceId), inline = true},
+    }, {
+        color = 0x7C4DFF,
+        author = {name = "DonateToPlayers"},
     })
 end
 
@@ -368,16 +400,22 @@ local subtitle = new(titleBar, "TextLabel", {
 })
 
 -- Tab buttons
-local tabRow = new(window, "Frame", {
+local tabRow = new(window, "ScrollingFrame", {
     Name = "TabRow",
     Position = UDim2.new(0,8,0,60),
     Size = UDim2.new(1,-16,0,36),
     BackgroundTransparency = 1,
+    AutomaticCanvasSize = Enum.AutomaticSize.X,
+    CanvasSize = UDim2.new(0,0,0,0),
+    ScrollBarThickness = 4,
+    ScrollBarImageTransparency = 1,
+    ScrollingDirection = Enum.ScrollingDirection.X,
+    ScrollingEnabled = true,
 })
 -- center the tab buttons
 local tabLayout = new(tabRow, "UIListLayout", {})
 tabLayout.FillDirection = Enum.FillDirection.Horizontal
-tabLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+tabLayout.HorizontalAlignment = Enum.HorizontalAlignment.Left
 tabLayout.SortOrder = Enum.SortOrder.LayoutOrder
 tabLayout.Padding = UDim.new(0,8)
 
@@ -386,10 +424,10 @@ local function makeTabButton(name, parent)
         Text = name,
         BackgroundColor3 = Color3.fromRGB(40,40,40),
         TextColor3 = Color3.new(1,1,1),
-        Size = UDim2.new(0.28, 0, 1, 0),
+        Size = UDim2.new(0, 92, 1, 0),
         AutoButtonColor = false,
         Font = Enum.Font.Gotham,
-        TextSize = 14,
+        TextSize = 13,
     })
     return btn
 end
@@ -469,8 +507,8 @@ end
 
 local function addTextBox(parent, placeholder, onEnter)
     local box = new(parent, "TextBox", {Text = "", PlaceholderText = placeholder, Size = UDim2.new(0.9,0,0,30), BackgroundColor3=Color3.fromRGB(36,36,36), TextColor3=Color3.fromRGB(220,220,220), Font=Enum.Font.Gotham, TextSize=14})
-    box.FocusLost:Connect(function(enter)
-        if enter then pcall(function() onEnter(box.Text) end) end
+    box.FocusLost:Connect(function()
+        pcall(function() onEnter(box.Text) end)
     end)
     return box
 end
@@ -949,16 +987,19 @@ local webhookBox = addTextBox(frames.Webhook, "Webhook URL", function(v)
     pcall(saveSettings)
 end)
 webhookBox.Text = SETTINGS.webhookUrl or ""
-local testWebhookBtn = addButton(frames.Webhook, "Test Webhook", function()
+local testDonationBtn = addButton(frames.Webhook, "Test Donation Webhook", function()
     if not SETTINGS.webhookUrl or SETTINGS.webhookUrl == "" then
         showNotification("Webhook URL is empty")
         return
     end
-    sendWebhookEvent("Webhook Test", "This is a test notification from Donate UI.", {
-        {name = "Player", value = LocalPlayer.Name, inline = true},
-        {name = "Place", value = tostring(game.PlaceId), inline = true},
-    })
-    showNotification("Webhook test sent")
+    task.spawn(function()
+        local ok, err = notifyDonationChange(25, 1500, 75)
+        if ok then
+            showNotification("Donation webhook test sent")
+        else
+            showNotification("Donation webhook failed: " .. tostring(err))
+        end
+    end)
 end)
 local clearWebhookBtn = addButton(frames.Webhook, "Clear Webhook", function()
     SETTINGS.webhookUrl = ""
