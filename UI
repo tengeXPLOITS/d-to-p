@@ -966,6 +966,7 @@ setAntiAfk(SETTINGS.antiAfk)
 antiAfkToggle:Set(SETTINGS.antiAfk)
 
 -- Server tab: Auto server hop, stay minutes, hop range, and immediate hop button
+local serverHopTimerLabel = nil
 local autoHopToggle, _ = addToggle(frames.Server, "Auto Server Hop", SETTINGS.autoServerHop, function(b)
     SETTINGS.autoServerHop = b
     if b then
@@ -1083,8 +1084,12 @@ prefBox.Text = tostring(SETTINGS.serverPreferredPlayers)
 local serverHopBtn = addButton(frames.Server, "Server Hop Now", function()
     lastServerHopAt = os.time()
     updateServerHopTimer()
+    showNotification("Server hop started")
     task.spawn(function()
-        pcall(function() serverHopNow(true) end)
+        local ok, err = pcall(function() serverHopNow(true) end)
+        if not ok then
+            showNotification("Server hop failed: " .. tostring(err))
+        end
     end)
 end)
 
@@ -1100,7 +1105,6 @@ local function pickRandomCandidates(list, maxCount)
     return out
 end
 
-local serverHopTimerLabel = nil
 local lastServerHopAt = os.time()
 
 local function updateServerHopTimer()
@@ -1219,6 +1223,7 @@ function serverHopNow(immediate)
 
         if #servers == 0 then
             updateServerMonitor(0)
+            showNotification("No available servers found")
             task.wait(1)
         else
             updateServerMonitor(#servers)
