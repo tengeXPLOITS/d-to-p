@@ -782,7 +782,7 @@ local function teleportToBoothAndClaim(model)
             local tryPos = Vector3.new(promptPosition.X + attempt.offset.X, promptPosition.Y + 2 + attempt.offset.Y, promptPosition.Z + attempt.offset.Z)
             local lookAt = promptPosition + Vector3.new(0, 1.2, 0)
             setPlayerPosition(tryPos, lookAt)
-            task.wait(0.06)
+            task.wait(0.03)
 
             local fired = false
 
@@ -817,12 +817,12 @@ local function teleportToBoothAndClaim(model)
                 if part and firetouchinterest then
                     pcall(function()
                         firetouchinterest(part, hrp, 0)
-                        task.wait(0.05)
+                        task.wait(0.02)
                         firetouchinterest(part, hrp, 1)
                     end)
                     pcall(function()
                         firetouchinterest(hrp, part, 0)
-                        task.wait(0.05)
+                        task.wait(0.02)
                         firetouchinterest(hrp, part, 1)
                     end)
                     fired = true
@@ -841,12 +841,22 @@ local function teleportToBoothAndClaim(model)
 
     if okFire then
         task.wait(0.08)
-        setPlayerPosition(finalPos, finalPos + ((hrp.CFrame and hrp.CFrame.LookVector) or Vector3.new(0, 0, -1)))
+        local outwardLook = anchorPart.Position - finalPos
+        if outwardLook.Magnitude < 0.001 then
+            outwardLook = (cp and cp.LookVector) or Vector3.new(0, 0, -1)
+        end
+        outwardLook = outwardLook.Unit
+        setPlayerPosition(finalPos, anchorPart.Position + outwardLook * 2)
         return true
     end
 
     task.wait(0.08)
-    setPlayerPosition(finalPos, finalPos + ((hrp.CFrame and hrp.CFrame.LookVector) or Vector3.new(0, 0, -1)))
+    local outwardLook = anchorPart.Position - finalPos
+    if outwardLook.Magnitude < 0.001 then
+        outwardLook = (cp and cp.LookVector) or Vector3.new(0, 0, -1)
+    end
+    outwardLook = outwardLook.Unit
+    setPlayerPosition(finalPos, anchorPart.Position + outwardLook * 2)
     task.wait(0.12)
 
     if prompt then
