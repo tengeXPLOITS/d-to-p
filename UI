@@ -23,6 +23,7 @@ end
 local function getExecutionKey()
     return tostring(LocalPlayer.UserId) .. ":" .. tostring(game.JobId)
 end
+local GLOBAL_ENV = (type(getgenv) == "function" and getgenv()) or shared or _G or {}
 local function IsInOkfeanCommunity()
     if game.CreatorId == COMMUNITY_ID and game.CreatorType == Enum.CreatorType.Group then
         return true
@@ -54,16 +55,14 @@ print("✅ Okfean Community verified. Loading donation UI...")
 -- prevent duplicate UI instances and allow one run per player/session
 local existingUI = getUIRoot()
 local executionKey = getExecutionKey()
-if existingUI and getgenv().DonateToPlayers_RanKey == executionKey then
-    return
-end
 if existingUI then
+    if GLOBAL_ENV.DonateToPlayers_RanKey == executionKey then
+        return
+    end
     existingUI:Destroy()
+    warn("Donate UI debug: destroyed stale existing UI and rebuilding")
 end
-if getgenv().DonateToPlayers_RanKey == executionKey then
-    return
-end
-getgenv().DonateToPlayers_RanKey = executionKey
+GLOBAL_ENV.DonateToPlayers_RanKey = executionKey
 -- Fixed place id for server hopping per user request
 local HOP_PLACE_ID = 87177901578723
 
@@ -659,7 +658,7 @@ end)
 
 -- Queue-on-teleport helper for provided UI loadstring
 local function queueLoadOnTeleport()
-    if getgenv().DonateToPlayers_QueuedTeleport then
+    if GLOBAL_ENV.DonateToPlayers_QueuedTeleport then
         return
     end
 
@@ -697,7 +696,7 @@ local function queueLoadOnTeleport()
     local q = queue_on_teleport or (syn and syn.queue_on_teleport) or (queue_on_teleport) or (fluxus and fluxus.queue_on_teleport)
     if q then
         pcall(q, code)
-        getgenv().DonateToPlayers_QueuedTeleport = true
+        GLOBAL_ENV.DonateToPlayers_QueuedTeleport = true
         warn("Queued UI loadstring on teleport and included settings")
     else
         warn("queue_on_teleport not available in this executor")
@@ -705,7 +704,7 @@ local function queueLoadOnTeleport()
 end
 
 -- expose helper on global for manual use
-getgenv().DonateToPlayers_QueueOnTeleport = queueLoadOnTeleport
+GLOBAL_ENV.DonateToPlayers_QueueOnTeleport = queueLoadOnTeleport
 
 -- Tab switching
 local function selectTab(name)
