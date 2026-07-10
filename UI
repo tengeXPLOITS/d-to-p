@@ -43,7 +43,7 @@ local function sendWebhookPayload(payload)
         return false, "No webhook URL"
     end
     local body = HttpService:JSONEncode(payload)
-    local ok, success, detail = pcall(function()
+    local ok, result = pcall(function()
         if httprequest then
             local res = httprequest({
                 Url = webhookUrl,
@@ -51,33 +51,25 @@ local function sendWebhookPayload(payload)
                 Headers = { ["Content-Type"] = "application/json" },
                 Body = body,
             })
-            if type(res) == "table" then
-                if res.Success == false then
-                    return false, res.StatusCode or res.StatusMessage or "Request failed"
-                end
-                if res.StatusCode and res.StatusCode >= 400 then
-                    return false, tostring(res.StatusCode)
-                end
-                return true, res
-            end
-            return res ~= nil, res
-        else
-            local res = HttpService:PostAsync(webhookUrl, body, Enum.HttpContentType.ApplicationJson)
-            return true, res
+            return res
         end
+        return HttpService:PostAsync(webhookUrl, body, Enum.HttpContentType.ApplicationJson)
     end)
     if not ok then
-        warn("Webhook send failed:", detail)
-        GLOBAL_ENV.DonateToPlayers_LastWebhookStatus = {ok = false, message = detail or "Unknown webhook error"}
-        return false, detail or "Unknown webhook error"
+        warn("Webhook send failed:", result)
+        GLOBAL_ENV.DonateToPlayers_LastWebhookStatus = {ok = false, message = tostring(result or "Unknown webhook error")}
+        return false, tostring(result or "Unknown webhook error")
     end
-    if success == false then
-        warn("Webhook send failed:", detail)
-        GLOBAL_ENV.DonateToPlayers_LastWebhookStatus = {ok = false, message = detail or "Request failed"}
-        return false, detail or "Request failed"
+    if result == nil then
+        GLOBAL_ENV.DonateToPlayers_LastWebhookStatus = {ok = false, message = "No response from executor"}
+        return false, "No response from executor"
     end
-    GLOBAL_ENV.DonateToPlayers_LastWebhookStatus = {ok = true, message = "Sent"}
-    return true, detail
+    if type(result) == "table" and result.Success == false then
+        GLOBAL_ENV.DonateToPlayers_LastWebhookStatus = {ok = false, message = tostring(result.StatusCode or result.StatusMessage or "Request failed")}
+        return false, tostring(result.StatusCode or result.StatusMessage or "Request failed")
+    end
+    GLOBAL_ENV.DonateToPlayers_LastWebhookStatus = {ok = true, message = "Sent", raw = result}
+    return true, result
 end
 
 local function sendWebhookEvent(title, description, fields, options)
@@ -1044,11 +1036,7 @@ local testDonationBtn = addButton(frames.Webhook, "Test Donation Webhook", funct
         simulateDonation(25)
         task.wait(0.35)
         local status = GLOBAL_ENV.DonateToPlayers_LastWebhookStatus or {ok = false, message = "No response"}
-        if status.ok then
-            showNotification("Donation webhook test sent")
-        else
-            showNotification("Donation webhook failed: " .. tostring(status.message or "Unknown"))
-        end
+        showNotification("Webhook status: " .. tostring(status.message or "Unknown"))
     end)
 end)
 local clearWebhookBtn = addButton(frames.Webhook, "Clear Webhook", function()
