@@ -126,8 +126,18 @@ local function normalizeWebhookUrl(value)
     return url
 end
 
+local function getActiveWebhookUrl()
+    if type(GLOBAL_ENV.DonateToPlayers_GetCurrentWebhookUrl) == "function" then
+        local value = GLOBAL_ENV.DonateToPlayers_GetCurrentWebhookUrl()
+        if value ~= nil then
+            return normalizeWebhookUrl(value)
+        end
+    end
+    return normalizeWebhookUrl(SETTINGS and SETTINGS.webhookUrl or "")
+end
+
 local function sendWebhookPayload(payload)
-    local webhookUrl = normalizeWebhookUrl(SETTINGS and SETTINGS.webhookUrl or "")
+    local webhookUrl = getActiveWebhookUrl()
     if webhookUrl == "" then
         return false, "No webhook URL"
     end
@@ -170,7 +180,7 @@ local function sendWebhookPayload(payload)
 end
 
 local function sendWebhookEvent(title, description, fields, options)
-    local webhookUrl = normalizeWebhookUrl(SETTINGS and SETTINGS.webhookUrl or "")
+    local webhookUrl = getActiveWebhookUrl()
     if webhookUrl == "" then
         return false, "No webhook URL"
     end
@@ -958,6 +968,9 @@ antiAfkToggle:Set(SETTINGS.antiAfk)
 -- Server tab: Auto server hop, stay minutes, hop range, and immediate hop button
 local autoHopToggle, _ = addToggle(frames.Server, "Auto Server Hop", SETTINGS.autoServerHop, function(b)
     SETTINGS.autoServerHop = b
+    if b then
+        lastServerHopAt = os.time()
+    end
     updateServerHopTimer()
     pcall(saveSettings)
 end)
@@ -985,8 +998,18 @@ local webhookBox = addTextBox(frames.Webhook, "Webhook URL", function(v)
     pcall(saveSettings)
 end)
 webhookBox.Text = SETTINGS.webhookUrl or ""
+
+local function getCurrentWebhookUrl()
+    if webhookBox then
+        return normalizeWebhookUrl(webhookBox.Text)
+    end
+    return normalizeWebhookUrl(SETTINGS and SETTINGS.webhookUrl or "")
+end
+
+GLOBAL_ENV.DonateToPlayers_GetCurrentWebhookUrl = getCurrentWebhookUrl
+
 local sendWebhookTestBtn = addButton(frames.Webhook, "Send UI Execution Test", function()
-    local webhookUrl = normalizeWebhookUrl(webhookBox and webhookBox.Text or "")
+    local webhookUrl = getCurrentWebhookUrl()
     SETTINGS.webhookUrl = webhookUrl
     pcall(saveSettings)
     if webhookUrl == "" then
@@ -1093,6 +1116,8 @@ local function updateServerHopTimer()
     local s = remaining % 60
     serverHopTimerLabel.Text = string.format("Next hop: %02dm %02ds", m, s)
 end
+
+updateServerHopTimer()
 
 function serverHopNow(immediate)
     lastServerHopAt = os.time()
