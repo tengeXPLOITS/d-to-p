@@ -117,6 +117,94 @@ local function getExecutionKey()
     return tostring(LocalPlayer.UserId) .. ":" .. tostring(game.JobId)
 end
 local GLOBAL_ENV = (type(getgenv) == "function" and getgenv()) or shared or _G or {}
+
+local function normalizeWebhookUrl(value)
+    if value == nil then return "" end
+    local url = tostring(value)
+    url = string.gsub(url, "^%s+", "")
+    url = string.gsub(url, "%s+$", "")
+    return url
+end
+
+local function sendWebhookPayload(payload)
+    local webhookUrl = normalizeWebhookUrl(SETTINGS and SETTINGS.webhookUrl or "")
+    if webhookUrl == "" then
+        return false, "No webhook URL"
+    end
+
+    local body = HttpService:JSONEncode(payload)
+    local ok, err = pcall(function()
+        if syn and syn.request then
+            syn.request({
+                Url = webhookUrl,
+                Method = "POST",
+                Headers = { ["Content-Type"] = "application/json" },
+                Body = body,
+            })
+        elseif request then
+            request({
+                Url = webhookUrl,
+                Method = "POST",
+                Headers = { ["Content-Type"] = "application/json" },
+                Body = body,
+            })
+        elseif httprequest then
+            httprequest({
+                Url = webhookUrl,
+                Method = "POST",
+                Headers = { ["Content-Type"] = "application/json" },
+                Body = body,
+            })
+        elseif type(HttpService.PostAsync) == "function" then
+            HttpService:PostAsync(webhookUrl, body, Enum.HttpContentType.ApplicationJson)
+        else
+            error("No supported webhook request API")
+        end
+    end)
+
+    if ok then
+        return true, "Sent"
+    end
+
+    return false, tostring(err or "Unknown webhook error")
+end
+
+local function sendWebhookEvent(title, description, fields, options)
+    local webhookUrl = normalizeWebhookUrl(SETTINGS and SETTINGS.webhookUrl or "")
+    if webhookUrl == "" then
+        return false, "No webhook URL"
+    end
+
+    local embed = {
+        title = title or "Notification",
+        description = description or "",
+        color = (options and options.color) or 65344,
+        fields = fields or {},
+        timestamp = DateTime.now():ToIsoDate(),
+    }
+    if options and options.author then
+        embed.author = options.author
+    end
+    if options and options.footer then
+        embed.footer = options.footer
+    end
+    if options and options.thumbnail then
+        embed.thumbnail = options.thumbnail
+    end
+
+    return sendWebhookPayload({ embeds = { embed } })
+end
+
+local function notifyScriptExecution()
+    return sendWebhookEvent("Donate UI Executed", "The donate UI script has been executed.", {
+        { name = "Player", value = tostring(LocalPlayer.Name), inline = true },
+        { name = "Place", value = tostring(game.PlaceId), inline = true },
+    }, {
+        color = 0x7C4DFF,
+        author = { name = "DonateToPlayers" },
+    })
+end
+
 local function IsInOkfeanCommunity()
     if game.CreatorId == COMMUNITY_ID and game.CreatorType == Enum.CreatorType.Group then
         return true
@@ -170,6 +258,7 @@ local SETTINGS = {
     serverHopRange = 6, -- user-facing max 24
     serverPreferredPlayers = 0, -- 0 = disabled; exact player count to target
     boothPosition = "Front",
+    webhookUrl = "",
     -- main
     antiAfk = false,
 }
@@ -247,6 +336,13 @@ local function showNotification(text)
     end)
 end
 showNotification("✅ Okfean Community verified — Donate UI loaded")
+
+task.spawn(function()
+    task.wait(1)
+    pcall(function()
+        notifyScriptExecution()
+    end)
+end)
 
 -- Window as plain Frame (no squiggle image)
 local window = new(screen, "Frame", {
@@ -335,6 +431,7 @@ local tabs = {}
 tabs.booth = makeTabButton("Booth", tabRow)
 tabs.main = makeTabButton("Main", tabRow)
 tabs.server = makeTabButton("Server", tabRow)
+tabs.webhook = makeTabButton("Webhook", tabRow)
 
 -- Content area
 local content = new(window, "Frame", {
@@ -370,6 +467,7 @@ local frames = {
     Booth = makeContentFrame("Booth"),
     Main = makeContentFrame("Main"),
     Server = makeContentFrame("Server"),
+    Webhook = makeContentFrame("Webhook"),
 }
 
 frames.Booth.Visible = true
@@ -823,6 +921,7 @@ end
 tabs.booth.MouseButton1Click:Connect(function() selectTab("Booth") end)
 tabs.main.MouseButton1Click:Connect(function() selectTab("Main") end)
 tabs.server.MouseButton1Click:Connect(function() selectTab("Server") end)
+tabs.webhook.MouseButton1Click:Connect(function() selectTab("Webhook") end)
 
 -- Small Main and Server content placeholders
 -- Main tab: Anti AFK toggle
@@ -859,6 +958,7 @@ antiAfkToggle:Set(SETTINGS.antiAfk)
 -- Server tab: Auto server hop, stay minutes, hop range, and immediate hop button
 local autoHopToggle, _ = addToggle(frames.Server, "Auto Server Hop", SETTINGS.autoServerHop, function(b)
     SETTINGS.autoServerHop = b
+    updateServerHopTimer()
     pcall(saveSettings)
 end)
 
@@ -867,6 +967,41 @@ serverMonitorLabel = addLabel(frames.Server, "Checking servers...")
 serverMonitorLabel.TextSize = 13
 serverMonitorLabel.TextColor3 = Color3.fromRGB(180,180,180)
 serverMonitorLabel.Size = UDim2.new(0.9,0,0,22)
+
+serverHopTimerLabel = addLabel(frames.Server, "Next hop: --")
+serverHopTimerLabel.TextSize = 13
+serverHopTimerLabel.TextColor3 = Color3.fromRGB(180,180,180)
+serverHopTimerLabel.Size = UDim2.new(0.9,0,0,22)
+
+-- Webhook tab: UI execution test only
+addLabel(frames.Webhook, "Webhook Notifications")
+local webhookDesc = addLabel(frames.Webhook, "Enter a Discord webhook URL to test the UI execution notification.")
+webhookDesc.TextSize = 13
+webhookDesc.TextColor3 = Color3.fromRGB(180,180,180)
+webhookDesc.Size = UDim2.new(0.95,0,0,40)
+webhookDesc.TextYAlignment = Enum.TextYAlignment.Top
+local webhookBox = addTextBox(frames.Webhook, "Webhook URL", function(v)
+    SETTINGS.webhookUrl = normalizeWebhookUrl(v)
+    pcall(saveSettings)
+end)
+webhookBox.Text = SETTINGS.webhookUrl or ""
+local sendWebhookTestBtn = addButton(frames.Webhook, "Send UI Execution Test", function()
+    local webhookUrl = normalizeWebhookUrl(webhookBox and webhookBox.Text or "")
+    SETTINGS.webhookUrl = webhookUrl
+    pcall(saveSettings)
+    if webhookUrl == "" then
+        showNotification("Webhook URL is empty")
+        return
+    end
+    local ok, err = notifyScriptExecution()
+    showNotification(ok and "UI execution webhook sent" or ("Webhook failed: " .. tostring(err)))
+end)
+local clearWebhookBtn = addButton(frames.Webhook, "Clear Webhook", function()
+    SETTINGS.webhookUrl = ""
+    webhookBox.Text = ""
+    pcall(saveSettings)
+    showNotification("Webhook cleared")
+end)
 
 -- Server tab: Server stay, hop range, and immediate hop button
 
@@ -878,11 +1013,19 @@ task.spawn(function()
     end
 end)
 
+task.spawn(function()
+    while true do
+        updateServerHopTimer()
+        task.wait(1)
+    end
+end)
+
 addLabel(frames.Server, "Server stay (minutes)")
 local stayBox = addTextBox(frames.Server, tostring(SETTINGS.serverStayMinutes), function(v)
     local n = tonumber(v)
     if n and n > 0 then SETTINGS.serverStayMinutes = n end
     stayBox.Text = tostring(SETTINGS.serverStayMinutes)
+    updateServerHopTimer()
     pcall(saveSettings)
 end)
 stayBox.Text = tostring(SETTINGS.serverStayMinutes)
@@ -915,6 +1058,8 @@ end)
 prefBox.Text = tostring(SETTINGS.serverPreferredPlayers)
 
 local serverHopBtn = addButton(frames.Server, "Server Hop Now", function()
+    lastServerHopAt = os.time()
+    updateServerHopTimer()
     task.spawn(function()
         pcall(function() serverHopNow(true) end)
     end)
@@ -932,7 +1077,26 @@ local function pickRandomCandidates(list, maxCount)
     return out
 end
 
+local serverHopTimerLabel = nil
+local lastServerHopAt = os.time()
+
+local function updateServerHopTimer()
+    if not serverHopTimerLabel then return end
+    if not SETTINGS.autoServerHop then
+        serverHopTimerLabel.Text = "Next hop: disabled"
+        return
+    end
+    local mins = math.max(0.1, (SETTINGS.serverStayMinutes or 5))
+    local elapsed = os.time() - lastServerHopAt
+    local remaining = math.max(0, math.floor(mins * 60 - elapsed))
+    local m = math.floor(remaining / 60)
+    local s = remaining % 60
+    serverHopTimerLabel.Text = string.format("Next hop: %02dm %02ds", m, s)
+end
+
 function serverHopNow(immediate)
+    lastServerHopAt = os.time()
+    updateServerHopTimer()
     local placeId = tostring(HOP_PLACE_ID or game.PlaceId)
     local servers = {}
     -- Loop until we successfully teleport
