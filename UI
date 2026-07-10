@@ -317,6 +317,8 @@ local SETTINGS = {
     serverHopRange = 6, -- user-facing max 24
     serverPreferredPlayers = 0, -- 0 = disabled; exact player count to target
     boothPosition = "Front",
+    boothClaimDistance = 12,
+    boothClaimDelay = 0.25,
     webhookUrl = "",
     -- main
     antiAfk = false,
@@ -665,14 +667,6 @@ local function teleportToBoothAndClaim(model)
         end)
     end
 
-    local initialPos = Vector3.new(anchorPart.Position.X, anchorPart.Position.Y + 2, anchorPart.Position.Z)
-    local initialLook = (hrp.CFrame and hrp.CFrame.LookVector) or Vector3.new(0, 0, -1)
-    setPlayerPosition(initialPos, initialPos + initialLook)
-    task.wait(0.12)
-
-    -- Give the booth and prompt a short moment to settle before claiming from range
-    task.wait(1.25)
-
     local function getClaimPromptCandidates()
         local prompts = {}
         local seen = {}
@@ -728,24 +722,35 @@ local function teleportToBoothAndClaim(model)
         end
     end
 
-    local dist = 7
     local cp = anchorPart.CFrame
     local front = cp.LookVector
     local right = cp.RightVector
     local choice = SETTINGS.boothPosition or "Front"
-    local finalPos
-    if choice == "Front" then
-        finalPos = anchorPart.Position + front * dist
-    elseif choice == "Behind" then
-        finalPos = anchorPart.Position - front * dist
-    elseif choice == "Left" then
-        finalPos = anchorPart.Position - right * dist
-    elseif choice == "Right" then
-        finalPos = anchorPart.Position + right * dist
-    else
-        finalPos = anchorPart.Position + front * dist
+    local claimDelay = math.max(0.15, math.min(0.6, (tonumber(SETTINGS.boothClaimDelay) or 0.25)))
+    local claimDistance = math.max(10, math.min(18, (tonumber(SETTINGS.boothClaimDistance) or 12)))
+    if prompt and prompt.MaxActivationDistance and prompt.MaxActivationDistance > 0 then
+        claimDistance = math.max(claimDistance, math.min(18, prompt.MaxActivationDistance + 2))
     end
-    finalPos = Vector3.new(finalPos.X, anchorPart.Position.Y + 2, finalPos.Z)
+    local dist = math.max(8, math.min(12, claimDistance - 2))
+
+    local function getBoothPosePosition(distance)
+        local dir = front
+        if choice == "Behind" then
+            dir = -front
+        elseif choice == "Left" then
+            dir = -right
+        elseif choice == "Right" then
+            dir = right
+        end
+        local pos = anchorPart.Position + dir * distance
+        return Vector3.new(pos.X, anchorPart.Position.Y + 2, pos.Z)
+    end
+
+    local finalPos = getBoothPosePosition(dist)
+    local firePos = getBoothPosePosition(claimDistance)
+    local fireLookAt = anchorPart.Position + Vector3.new(0, 1.2, 0)
+    setPlayerPosition(firePos, fireLookAt)
+    task.wait(0.05)
 
     local function robustFirePrompt(promptObj)
         if not promptObj then
@@ -840,7 +845,7 @@ local function teleportToBoothAndClaim(model)
     end
 
     if okFire then
-        task.wait(0.08)
+        task.wait(claimDelay)
         local outwardLook = anchorPart.Position - finalPos
         if outwardLook.Magnitude < 0.001 then
             outwardLook = (cp and cp.LookVector) or Vector3.new(0, 0, -1)
@@ -850,14 +855,14 @@ local function teleportToBoothAndClaim(model)
         return true
     end
 
-    task.wait(0.08)
+    task.wait(claimDelay)
     local outwardLook = anchorPart.Position - finalPos
     if outwardLook.Magnitude < 0.001 then
         outwardLook = (cp and cp.LookVector) or Vector3.new(0, 0, -1)
     end
     outwardLook = outwardLook.Unit
     setPlayerPosition(finalPos, anchorPart.Position + outwardLook * 2)
-    task.wait(0.12)
+    task.wait(0.08)
 
     if prompt then
         okFire = robustFirePrompt(prompt)
