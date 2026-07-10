@@ -28,15 +28,25 @@ local function parseNumberValue(value)
     return tonumber(str)
 end
 
+local function normalizeWebhookUrl(value)
+    if value == nil then return "" end
+    local url = tostring(value)
+    url = string.gsub(url, "^%s+", "")
+    url = string.gsub(url, "%s+$", "")
+    return url
+end
+
 local function sendWebhookPayload(payload)
-    if not SETTINGS or not SETTINGS.webhookUrl or SETTINGS.webhookUrl == "" then
+    local webhookUrl = normalizeWebhookUrl(SETTINGS and SETTINGS.webhookUrl or "")
+    if webhookUrl == "" then
+        GLOBAL_ENV.DonateToPlayers_LastWebhookStatus = {ok = false, message = "No webhook URL"}
         return false, "No webhook URL"
     end
     local body = HttpService:JSONEncode(payload)
     local ok, success, detail = pcall(function()
         if httprequest then
             local res = httprequest({
-                Url = SETTINGS.webhookUrl,
+                Url = webhookUrl,
                 Method = "POST",
                 Headers = { ["Content-Type"] = "application/json" },
                 Body = body,
@@ -52,23 +62,27 @@ local function sendWebhookPayload(payload)
             end
             return res ~= nil, res
         else
-            local res = HttpService:PostAsync(SETTINGS.webhookUrl, body, Enum.HttpContentType.ApplicationJson)
+            local res = HttpService:PostAsync(webhookUrl, body, Enum.HttpContentType.ApplicationJson)
             return true, res
         end
     end)
     if not ok then
         warn("Webhook send failed:", detail)
+        GLOBAL_ENV.DonateToPlayers_LastWebhookStatus = {ok = false, message = detail or "Unknown webhook error"}
         return false, detail or "Unknown webhook error"
     end
     if success == false then
         warn("Webhook send failed:", detail)
+        GLOBAL_ENV.DonateToPlayers_LastWebhookStatus = {ok = false, message = detail or "Request failed"}
         return false, detail or "Request failed"
     end
+    GLOBAL_ENV.DonateToPlayers_LastWebhookStatus = {ok = true, message = "Sent"}
     return true, detail
 end
 
 local function sendWebhookEvent(title, description, fields, options)
-    if not SETTINGS or not SETTINGS.webhookUrl or SETTINGS.webhookUrl == "" then
+    local webhookUrl = normalizeWebhookUrl(SETTINGS and SETTINGS.webhookUrl or "")
+    if webhookUrl == "" then
         return false, "No webhook URL"
     end
     local embed = {
@@ -89,6 +103,22 @@ local function sendWebhookEvent(title, description, fields, options)
     end
     local payload = { embeds = { embed } }
     return sendWebhookPayload(payload)
+end
+
+local function ensureRaisedStat()
+    local leaderstats = LocalPlayer:FindFirstChild("leaderstats")
+    if not leaderstats then
+        leaderstats = Instance.new("Folder")
+        leaderstats.Name = "leaderstats"
+        leaderstats.Parent = LocalPlayer
+    end
+    local raised = leaderstats:FindFirstChild("Raised")
+    if not raised then
+        raised = Instance.new("IntValue")
+        raised.Name = "Raised"
+        raised.Parent = leaderstats
+    end
+    return raised
 end
 
 local function findRaisedStat()
@@ -149,6 +179,14 @@ end
 
 local function getCurrentPendingValue()
     return findPendingValue()
+end
+
+local function simulateDonation(amount)
+    local raised = ensureRaisedStat()
+    local current = parseNumberValue(raised.Value) or 0
+    local addAmount = math.max(1, math.floor(tonumber(amount) or 0))
+    raised.Value = current + addAmount
+    return raised.Value
 end
 
 local function notifyDonationChange(amountReceived, currentRaised, currentPending)
@@ -995,16 +1033,21 @@ local webhookBox = addTextBox(frames.Webhook, "Webhook URL", function(v)
 end)
 webhookBox.Text = SETTINGS.webhookUrl or ""
 local testDonationBtn = addButton(frames.Webhook, "Test Donation Webhook", function()
-    if not SETTINGS.webhookUrl or SETTINGS.webhookUrl == "" then
+    local webhookUrl = normalizeWebhookUrl(webhookBox and webhookBox.Text or "")
+    SETTINGS.webhookUrl = webhookUrl
+    pcall(saveSettings)
+    if webhookUrl == "" then
         showNotification("Webhook URL is empty")
         return
     end
     task.spawn(function()
-        local ok, err = notifyDonationChange(25, 1500, 75)
-        if ok then
+        simulateDonation(25)
+        task.wait(0.35)
+        local status = GLOBAL_ENV.DonateToPlayers_LastWebhookStatus or {ok = false, message = "No response"}
+        if status.ok then
             showNotification("Donation webhook test sent")
         else
-            showNotification("Donation webhook failed: " .. tostring(err))
+            showNotification("Donation webhook failed: " .. tostring(status.message or "Unknown"))
         end
     end)
 end)
