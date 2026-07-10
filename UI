@@ -436,11 +436,11 @@ local title = new(titleBar, "TextLabel", {
     TextWrapped = false,
 })
 local subtitle = new(titleBar, "TextLabel", {
-    Text = "@yk.m4tty",
+    Text = "@k0yg",
     BackgroundTransparency = 1,
-    TextColor3 = Color3.fromRGB(180,180,180),
-    Font = Enum.Font.Gotham,
-    TextSize = 12,
+    TextColor3 = Color3.fromRGB(255, 80, 80),
+    Font = Enum.Font.GothamBold,
+    TextSize = 13,
     Position = UDim2.new(0, 12, 0, 18),
     Size = UDim2.new(1, -24, 0, 14),
     TextXAlignment = Enum.TextXAlignment.Left,
@@ -1294,6 +1294,7 @@ function serverHopNow(immediate)
                     pcall(function() body = HttpService:JSONDecode(bodyStr) end)
                     if body and body.data then
                         local preferred = {}
+                        local busy = {}
                         local available = {}
                         local other = {}
                         local minPlayers = shouldUseAntiNonBusyServers() and SERVER_HOP_MIN_PLAYERS or 0
@@ -1303,10 +1304,11 @@ function serverHopNow(immediate)
                                 local playing = tonumber(v.playing) or 0
                                 local maxP = tonumber(v.maxPlayers) or 0
                                 local notFull = (maxP > 0) and (playing < maxP) or true
-                                if prefTarget > 0 and playing and playing == prefTarget then
+                                local meetsBusy = minPlayers <= 0 or playing >= minPlayers
+                                if prefTarget > 0 and playing == prefTarget and meetsBusy then
                                     table.insert(preferred, v.id)
                                 elseif minPlayers > 0 and playing >= minPlayers then
-                                    table.insert(preferred, v.id)
+                                    table.insert(busy, v.id)
                                 elseif prefTarget <= 0 and playing and playing >= 21 and playing <= 22 then
                                     table.insert(preferred, v.id)
                                 elseif playing and maxP and playing < maxP then
@@ -1317,7 +1319,11 @@ function serverHopNow(immediate)
                             end
                         end
 
-                        if #preferred > 0 then
+                        if prefTarget > 0 then
+                            servers = preferred
+                        elseif minPlayers > 0 then
+                            servers = busy
+                        elseif #preferred > 0 then
                             servers = preferred
                         elseif #available > 0 then
                             servers = available
