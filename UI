@@ -44,74 +44,43 @@ local function sendWebhookPayload(payload)
     end
 
     local body = HttpService:JSONEncode(payload)
-    local attempts = {}
-
-    if httprequest then
-        attempts[#attempts + 1] = function()
-            return httprequest({
+    local ok, err = pcall(function()
+        if syn and syn.request then
+            syn.request({
                 Url = webhookUrl,
                 Method = "POST",
                 Headers = { ["Content-Type"] = "application/json" },
                 Body = body,
             })
-        end
-    end
-
-    if type(HttpService.PostAsync) == "function" then
-        attempts[#attempts + 1] = function()
-            return HttpService:PostAsync(webhookUrl, body, Enum.HttpContentType.ApplicationJson)
-        end
-    end
-
-    if type(game.HttpPostAsync) == "function" then
-        attempts[#attempts + 1] = function()
-            return game:HttpPostAsync(webhookUrl, body, Enum.HttpContentType.ApplicationJson)
-        end
-    end
-
-    if #attempts == 0 then
-        local msg = "No request API available in this executor"
-        GLOBAL_ENV.DonateToPlayers_LastWebhookStatus = {ok = false, message = msg}
-        return false, msg
-    end
-
-    local lastError = nil
-    for _, attempt in ipairs(attempts) do
-        local ok, result = pcall(attempt)
-        if ok then
-            if type(result) == "table" then
-                if result.Success == false then
-                    local msg = tostring(result.StatusCode or result.StatusMessage or "Request failed")
-                    GLOBAL_ENV.DonateToPlayers_LastWebhookStatus = {ok = false, message = msg, raw = result}
-                    return false, msg
-                end
-                if result.StatusCode and tonumber(result.StatusCode) >= 400 then
-                    local msg = tostring(result.StatusCode or result.StatusMessage or "Request failed")
-                    GLOBAL_ENV.DonateToPlayers_LastWebhookStatus = {ok = false, message = msg, raw = result}
-                    return false, msg
-                end
-                GLOBAL_ENV.DonateToPlayers_LastWebhookStatus = {ok = true, message = "Sent", raw = result}
-                return true, result
-            end
-
-            if type(result) == "string" and result ~= "" then
-                GLOBAL_ENV.DonateToPlayers_LastWebhookStatus = {ok = true, message = "Sent", raw = result}
-                return true, result
-            end
-
-            if result == true then
-                GLOBAL_ENV.DonateToPlayers_LastWebhookStatus = {ok = true, message = "Sent"}
-                return true, result
-            end
-
-            lastError = "No response from executor"
+        elseif request then
+            request({
+                Url = webhookUrl,
+                Method = "POST",
+                Headers = { ["Content-Type"] = "application/json" },
+                Body = body,
+            })
+        elseif httprequest then
+            httprequest({
+                Url = webhookUrl,
+                Method = "POST",
+                Headers = { ["Content-Type"] = "application/json" },
+                Body = body,
+            })
+        elseif type(HttpService.PostAsync) == "function" then
+            HttpService:PostAsync(webhookUrl, body, Enum.HttpContentType.ApplicationJson)
         else
-            lastError = tostring(result or "Unknown webhook error")
+            error("No supported webhook request API")
         end
+    end)
+
+    if ok then
+        GLOBAL_ENV.DonateToPlayers_LastWebhookStatus = {ok = true, message = "Sent (fire-and-forget)"}
+        return true, "Sent (fire-and-forget)"
     end
 
-    GLOBAL_ENV.DonateToPlayers_LastWebhookStatus = {ok = false, message = lastError or "No response from executor"}
-    return false, lastError or "No response from executor"
+    local msg = tostring(err or "Unknown webhook error")
+    GLOBAL_ENV.DonateToPlayers_LastWebhookStatus = {ok = false, message = msg}
+    return false, msg
 end
 
 local function sendWebhookEvent(title, description, fields, options)
