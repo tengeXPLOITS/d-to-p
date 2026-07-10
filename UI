@@ -351,7 +351,7 @@ local function teleportToBoothAndClaim(model)
     task.wait(0.12)
 
     -- Give the booth and prompt a short moment to settle before claiming from range
-    task.wait(3)
+    task.wait(1.25)
 
     local function getClaimPromptCandidates()
         local prompts = {}
@@ -520,12 +520,12 @@ local function teleportToBoothAndClaim(model)
     end
 
     if okFire then
-        task.wait(0.3)
+        task.wait(0.08)
         setPlayerPosition(finalPos, finalPos + ((hrp.CFrame and hrp.CFrame.LookVector) or Vector3.new(0, 0, -1)))
         return true
     end
 
-    task.wait(0.3)
+    task.wait(0.08)
     setPlayerPosition(finalPos, finalPos + ((hrp.CFrame and hrp.CFrame.LookVector) or Vector3.new(0, 0, -1)))
     task.wait(0.12)
 
@@ -598,7 +598,7 @@ end
 
 -- Auto-run claim once UI loads (script already claims automatically)
 task.spawn(function()
-    task.wait(4)
+    task.wait(2)
     pcall(refreshServerMonitor)
     pcall(claimFirstAvailable)
 end)
@@ -609,8 +609,22 @@ local function queueLoadOnTeleport()
         return
     end
 
+    local settingsJson = "{}"
+    pcall(function()
+        settingsJson = HttpService:JSONEncode(SETTINGS or {})
+    end)
+
     local code = string.format([[
         repeat task.wait() until game:IsLoaded()
+        -- restore settings file so newly loaded UI picks up user preferences
+        pcall(function()
+            if writefile then
+                pcall(function()
+                    writefile(%q, %q)
+                end)
+            end
+        end)
+
         local ok, err = pcall(function()
             local Players = game:GetService("Players")
             local LocalPlayer = Players.LocalPlayer
@@ -624,13 +638,13 @@ local function queueLoadOnTeleport()
         if not ok then
             warn(err)
         end
-    ]], UI_SOURCE_URL)
+    ]], SETTINGS_FILE, settingsJson, UI_SOURCE_URL)
 
     local q = queue_on_teleport or (syn and syn.queue_on_teleport) or (queue_on_teleport) or (fluxus and fluxus.queue_on_teleport)
     if q then
         pcall(q, code)
         getgenv().DonateToPlayers_QueuedTeleport = true
-        warn("Queued UI loadstring on teleport")
+        warn("Queued UI loadstring on teleport and included settings")
     else
         warn("queue_on_teleport not available in this executor")
     end
