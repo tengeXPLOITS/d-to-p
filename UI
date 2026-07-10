@@ -20,6 +20,175 @@ local function getUIRoot()
     return PlayerGui:FindFirstChild(UI_NAME)
 end
 
+local function parseNumberValue(value)
+    if value == nil then return nil end
+    local str = tostring(value)
+    str = string.gsub(str, "%s", "")
+    str = string.gsub(str, "[^%d%.%-]", "")
+    return tonumber(str)
+end
+
+local function sendWebhookPayload(payload)
+    if not SETTINGS.webhookUrl or SETTINGS.webhookUrl == "" then
+        return false
+    end
+    local body = HttpService:JSONEncode(payload)
+    local ok, result = pcall(function()
+        if httprequest then
+            local res = httprequest({
+                Url = SETTINGS.webhookUrl,
+                Method = "POST",
+                Headers = { ["Content-Type"] = "application/json" },
+                Body = body,
+            })
+            return res
+        else
+            return HttpService:PostAsync(SETTINGS.webhookUrl, body, Enum.HttpContentType.ApplicationJson)
+        end
+    end)
+    if not ok then
+        warn("Webhook send failed:", result)
+    end
+    return ok
+end
+
+local function sendWebhookEvent(title, description, fields)
+    if not SETTINGS.webhookUrl or SETTINGS.webhookUrl == "" then
+        return
+    end
+    local payload = {
+        embeds = {{
+            title = title,
+            description = description or "",
+            color = 65344,
+            fields = fields or {},
+            timestamp = DateTime.now():ToIsoDate(),
+        }},
+    }
+    sendWebhookPayload(payload)
+end
+
+local function findRaisedStat()
+    local function findStat(root)
+        for _, child in ipairs(root:GetChildren()) do
+            if (child.Name:lower() == "raised") and (child:IsA("IntValue") or child:IsA("NumberValue") or child:IsA("StringValue")) then
+                return child
+            end
+        end
+        for _, child in ipairs(root:GetChildren()) do
+            local found = findStat(child)
+            if found then return found end
+        end
+        return nil
+    end
+    local leaderstats = LocalPlayer:FindFirstChild("leaderstats")
+    if leaderstats then
+        local raised = leaderstats:FindFirstChild("Raised") or leaderstats:FindFirstChild("raised")
+        if raised then return raised end
+    end
+    return findStat(LocalPlayer)
+end
+
+local function findPendingValue()
+    local pendingRoot
+    for _, desc in ipairs(LocalPlayer:GetDescendants()) do
+        if desc.Name == "PedingRobux" then
+            pendingRoot = desc
+            break
+        end
+    end
+    if not pendingRoot then
+        return nil
+    end
+    local pendingText
+    local listObj = pendingRoot:FindFirstChild("PedingRobuxList") or pendingRoot:FindFirstChild("Pending")
+    if listObj then
+        pendingText = listObj.Text or listObj.Value
+    else
+        for _, desc in ipairs(pendingRoot:GetDescendants()) do
+            if desc.Name == "PedingRobuxList" or desc.Name == "Pending" then
+                pendingText = desc.Text or desc.Value
+                break
+            end
+        end
+    end
+    return parseNumberValue(pendingText)
+end
+
+local lastRaisedValue = nil
+local lastPendingValue = nil
+
+local function getCurrentRaisedValue()
+    local stat = findRaisedStat()
+    if not stat then return nil end
+    return parseNumberValue(stat.Value)
+end
+
+local function getCurrentPendingValue()
+    return findPendingValue()
+end
+
+local function notifyDonationChange(amountReceived, currentRaised, currentPending)
+    if not amountReceived or amountReceived <= 0 then
+        return
+    end
+    local fields = {
+        {name = "Amount Received", value = tostring(amountReceived), inline = true},
+        {name = "Raised Total", value = tostring(currentRaised or "Unknown"), inline = true},
+        {name = "Pending Robux", value = tostring(currentPending or "Unknown"), inline = true},
+    }
+    sendWebhookEvent("Donation Received", "A donation has been detected.", fields)
+end
+
+local function notifyScriptExecution()
+    sendWebhookEvent("Donate UI Executed", "The donate UI script has been executed. This counts as a server hop.", {
+        {name = "Player", value = tostring(LocalPlayer.Name), inline = true},
+        {name = "Place", value = tostring(game.PlaceId), inline = true},
+    })
+end
+
+local function refreshDonationWatchers()
+    lastRaisedValue = getCurrentRaisedValue() or 0
+    lastPendingValue = getCurrentPendingValue() or 0
+    local raisedStat = findRaisedStat()
+    if raisedStat then
+        raisedStat.Changed:Connect(function(newValue)
+            local current = parseNumberValue(newValue)
+            if not current then return end
+            if lastRaisedValue and current > lastRaisedValue then
+                local diff = current - (lastRaisedValue or 0)
+                lastRaisedValue = current
+                lastPendingValue = getCurrentPendingValue() or lastPendingValue
+                notifyDonationChange(diff, current, lastPendingValue)
+            else
+                lastRaisedValue = current
+            end
+        end)
+    end
+    local function connectPendingWatch()
+        for _, desc in ipairs(LocalPlayer:GetDescendants()) do
+            if desc.Name == "PedingRobux" then
+                desc.DescendantAdded:Connect(function(child)
+                    if child.Name == "PedingRobuxList" or child.Name == "Pending" then
+                        child.Changed:Connect(function()
+                            lastPendingValue = getCurrentPendingValue() or lastPendingValue
+                        end)
+                    end
+                end)
+                for _, child in ipairs(desc:GetDescendants()) do
+                    if child.Name == "PedingRobuxList" or child.Name == "Pending" then
+                        child.Changed:Connect(function()
+                            lastPendingValue = getCurrentPendingValue() or lastPendingValue
+                        end)
+                    end
+                end
+                break
+            end
+        end
+    end
+    connectPendingWatch()
+end
+
 local function getExecutionKey()
     return tostring(LocalPlayer.UserId) .. ":" .. tostring(game.JobId)
 end
@@ -77,6 +246,7 @@ local SETTINGS = {
     serverHopRange = 6, -- user-facing max 24
     serverPreferredPlayers = 0, -- 0 = disabled; exact player count to target
     boothPosition = "Front",
+    webhookUrl = "",
     -- main
     antiAfk = false,
 }
@@ -228,6 +398,7 @@ local tabs = {}
 tabs.booth = makeTabButton("Booth", tabRow)
 tabs.main = makeTabButton("Main", tabRow)
 tabs.server = makeTabButton("Server", tabRow)
+tabs.webhook = makeTabButton("Webhook", tabRow)
 
 -- Content area
 local content = new(window, "Frame", {
@@ -263,9 +434,15 @@ local frames = {
     Booth = makeContentFrame("Booth"),
     Main = makeContentFrame("Main"),
     Server = makeContentFrame("Server"),
+    Webhook = makeContentFrame("Webhook"),
 }
 
 frames.Booth.Visible = true
+
+task.spawn(function()
+    refreshDonationWatchers()
+    notifyScriptExecution()
+end)
 
 -- Simple control factory
 local function addLabel(parent, text)
@@ -715,6 +892,7 @@ end
 tabs.booth.MouseButton1Click:Connect(function() selectTab("Booth") end)
 tabs.main.MouseButton1Click:Connect(function() selectTab("Main") end)
 tabs.server.MouseButton1Click:Connect(function() selectTab("Server") end)
+tabs.webhook.MouseButton1Click:Connect(function() selectTab("Webhook") end)
 
 -- Small Main and Server content placeholders
 -- Main tab: Anti AFK toggle
@@ -759,6 +937,35 @@ serverMonitorLabel = addLabel(frames.Server, "Checking servers...")
 serverMonitorLabel.TextSize = 13
 serverMonitorLabel.TextColor3 = Color3.fromRGB(180,180,180)
 serverMonitorLabel.Size = UDim2.new(0.9,0,0,22)
+
+addLabel(frames.Webhook, "Webhook Notifications")
+local webhookDesc = addLabel(frames.Webhook, "Enter a Discord webhook URL to receive notifications when the UI executes and when donations arrive.")
+webhookDesc.TextSize = 13
+webhookDesc.TextColor3 = Color3.fromRGB(180,180,180)
+webhookDesc.Size = UDim2.new(0.95,0,0,40)
+webhookDesc.TextYAlignment = Enum.TextYAlignment.Top
+local webhookBox = addTextBox(frames.Webhook, "Webhook URL", function(v)
+    SETTINGS.webhookUrl = tostring(v or "")
+    pcall(saveSettings)
+end)
+webhookBox.Text = SETTINGS.webhookUrl or ""
+local testWebhookBtn = addButton(frames.Webhook, "Test Webhook", function()
+    if not SETTINGS.webhookUrl or SETTINGS.webhookUrl == "" then
+        showNotification("Webhook URL is empty")
+        return
+    end
+    sendWebhookEvent("Webhook Test", "This is a test notification from Donate UI.", {
+        {name = "Player", value = LocalPlayer.Name, inline = true},
+        {name = "Place", value = tostring(game.PlaceId), inline = true},
+    })
+    showNotification("Webhook test sent")
+end)
+local clearWebhookBtn = addButton(frames.Webhook, "Clear Webhook", function()
+    SETTINGS.webhookUrl = ""
+    webhookBox.Text = ""
+    pcall(saveSettings)
+    showNotification("Webhook cleared")
+end)
 
 -- Server tab: Server stay, hop range, and immediate hop button
 
