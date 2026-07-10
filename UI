@@ -33,7 +33,7 @@ local function sendWebhookPayload(payload)
         return false, "No webhook URL"
     end
     local body = HttpService:JSONEncode(payload)
-    local ok, result = pcall(function()
+    local ok, success, detail = pcall(function()
         if httprequest then
             local res = httprequest({
                 Url = SETTINGS.webhookUrl,
@@ -57,13 +57,12 @@ local function sendWebhookPayload(payload)
         end
     end)
     if not ok then
-        warn("Webhook send failed:", result)
-        return false, result
+        warn("Webhook send failed:", detail)
+        return false, detail or "Unknown webhook error"
     end
-    local success, detail = result or true, nil
     if success == false then
         warn("Webhook send failed:", detail)
-        return false, detail
+        return false, detail or "Request failed"
     end
     return true, detail
 end
@@ -400,10 +399,18 @@ local subtitle = new(titleBar, "TextLabel", {
 })
 
 -- Tab buttons
-local tabRow = new(window, "ScrollingFrame", {
+local tabBar = new(window, "Frame", {
+    Name = "TabBar",
+    Position = UDim2.new(0,8,0,56),
+    Size = UDim2.new(1,-16,0,40),
+    BackgroundColor3 = Color3.fromRGB(24,24,24),
+    BorderSizePixel = 0,
+})
+pcall(function() new(tabBar, "UICorner", {CornerRadius = UDim.new(0,6)}) end)
+local tabRow = new(tabBar, "ScrollingFrame", {
     Name = "TabRow",
-    Position = UDim2.new(0,8,0,60),
-    Size = UDim2.new(1,-16,0,36),
+    Position = UDim2.new(0,6,0,4),
+    Size = UDim2.new(1,-12,1,-8),
     BackgroundTransparency = 1,
     AutomaticCanvasSize = Enum.AutomaticSize.X,
     CanvasSize = UDim2.new(0,0,0,0),
@@ -412,23 +419,23 @@ local tabRow = new(window, "ScrollingFrame", {
     ScrollingDirection = Enum.ScrollingDirection.X,
     ScrollingEnabled = true,
 })
--- center the tab buttons
 local tabLayout = new(tabRow, "UIListLayout", {})
 tabLayout.FillDirection = Enum.FillDirection.Horizontal
 tabLayout.HorizontalAlignment = Enum.HorizontalAlignment.Left
 tabLayout.SortOrder = Enum.SortOrder.LayoutOrder
-tabLayout.Padding = UDim.new(0,8)
+tabLayout.Padding = UDim.new(0,6)
 
 local function makeTabButton(name, parent)
     local btn = new(parent, "TextButton", {
         Text = name,
         BackgroundColor3 = Color3.fromRGB(40,40,40),
         TextColor3 = Color3.new(1,1,1),
-        Size = UDim2.new(0, 92, 1, 0),
+        Size = UDim2.new(0, 78, 1, -2),
         AutoButtonColor = false,
         Font = Enum.Font.Gotham,
-        TextSize = 13,
+        TextSize = 12,
     })
+    pcall(function() new(btn, "UICorner", {CornerRadius = UDim.new(0,5)}) end)
     return btn
 end
 
@@ -441,8 +448,8 @@ tabs.webhook = makeTabButton("Webhook", tabRow)
 -- Content area
 local content = new(window, "Frame", {
     Name = "Content",
-    Position = UDim2.new(0,8,0,104),
-    Size = UDim2.new(1,-16,1,-96),
+    Position = UDim2.new(0,8,0,108),
+    Size = UDim2.new(1,-16,1,-100),
     BackgroundTransparency = 1,
 })
 
