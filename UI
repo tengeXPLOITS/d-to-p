@@ -302,7 +302,7 @@ if existingUI then
     warn("Donate UI debug: destroyed stale existing UI and rebuilding")
 end
 GLOBAL_ENV.DonateToPlayers_RanKey = executionKey
--- Keep the stable community place as the default hop target so the button uses the same place that was already working.
+-- Keep the stable community place as the primary hop target so the button uses the same place that was already working.
 local HOP_PLACE_ID = 87177901578723
 
 -- Settings (defaults)
@@ -1023,14 +1023,9 @@ setAntiAfk(SETTINGS.antiAfk)
 -- ensure changes persist when toggled
 antiAfkToggle:Set(SETTINGS.antiAfk)
 
--- Server tab: Auto server hop, stay minutes, hop range, and immediate hop button
-local serverHopTimerLabel = nil
+-- Server tab: Auto server hop and immediate hop controls
 local autoHopToggle, _ = addToggle(frames.Server, "Auto Server Hop", SETTINGS.autoServerHop, function(b)
     SETTINGS.autoServerHop = b
-    if b then
-        lastServerHopAt = os.clock()
-    end
-    updateServerHopTimer()
     pcall(saveSettings)
 end)
 local antiNonBusyToggle, _ = addToggle(frames.Server, "Anti non-busy servers", SETTINGS.antiNonBusyServers, function(b)
@@ -1043,11 +1038,6 @@ serverMonitorLabel = addLabel(frames.Server, "Checking servers...")
 serverMonitorLabel.TextSize = 13
 serverMonitorLabel.TextColor3 = Color3.fromRGB(180,180,180)
 serverMonitorLabel.Size = UDim2.new(0.9,0,0,22)
-
-serverHopTimerLabel = addLabel(frames.Server, "Next hop: --")
-serverHopTimerLabel.TextSize = 13
-serverHopTimerLabel.TextColor3 = Color3.fromRGB(180,180,180)
-serverHopTimerLabel.Size = UDim2.new(0.9,0,0,22)
 
 -- Webhook tab: UI execution test only
 addLabel(frames.Webhook, "Webhook Notifications")
@@ -1110,19 +1100,11 @@ task.spawn(function()
     end
 end)
 
-task.spawn(function()
-    while true do
-        updateServerHopTimer()
-        task.wait(0.2)
-    end
-end)
-
 addLabel(frames.Server, "Server stay (minutes)")
 local stayBox = addTextBox(frames.Server, tostring(SETTINGS.serverStayMinutes), function(v)
     local n = tonumber(v)
     if n and n > 0 then SETTINGS.serverStayMinutes = n end
     stayBox.Text = tostring(SETTINGS.serverStayMinutes)
-    updateServerHopTimer()
     pcall(saveSettings)
 end)
 stayBox.Text = tostring(SETTINGS.serverStayMinutes)
@@ -1155,8 +1137,6 @@ end)
 prefBox.Text = tostring(SETTINGS.serverPreferredPlayers)
 
 local serverHopBtn = addButton(frames.Server, "Server Hop Now", function()
-    lastServerHopAt = os.clock()
-    updateServerHopTimer()
     showNotification("Server hop started")
     task.spawn(function()
         local ok, err = pcall(function() serverHopNow(true) end)
@@ -1177,24 +1157,6 @@ local function pickRandomCandidates(list, maxCount)
     end
     return out
 end
-
-local lastServerHopAt = os.clock()
-
-local function updateServerHopTimer()
-    if not serverHopTimerLabel then return end
-    local mins = math.max(0.1, (SETTINGS.serverStayMinutes or 5))
-    if not SETTINGS.autoServerHop then
-        serverHopTimerLabel.Text = "Next hop: disabled"
-        return
-    end
-    local elapsed = os.clock() - lastServerHopAt
-    local remaining = math.max(0, math.floor(mins * 60 - elapsed))
-    local m = math.floor(remaining / 60)
-    local s = remaining % 60
-    serverHopTimerLabel.Text = string.format("Next hop: %02dm %02ds", m, s)
-end
-
-updateServerHopTimer()
 
 local function getCommunityPlaceIds()
     local placeIds = {}
@@ -1238,10 +1200,22 @@ end
 
 local function getHopPlaceIds()
     local configured = tonumber(SETTINGS.serverHopPlaceId or 0)
-    if configured and configured > 0 then
-        return {configured}
+    local ids = {}
+    local seen = {}
+    local function addId(id)
+        local n = tonumber(id)
+        if n and n > 0 and not seen[n] then
+            seen[n] = true
+            table.insert(ids, n)
+        end
     end
-    return getCommunityPlaceIds()
+
+    if configured and configured > 0 then
+        addId(configured)
+    end
+    addId(HOP_PLACE_ID)
+    addId(game.PlaceId)
+    return ids
 end
 
 local function getHopPlaceId()
@@ -1300,9 +1274,6 @@ local function tryTeleportToServer(placeId, instanceId)
 end
 
 function serverHopNow(immediate)
-    lastServerHopAt = os.clock()
-    updateServerHopTimer()
-
     local placeIds = getHopPlaceIds()
     local attempt = 0
     local lastError = nil
@@ -1353,6 +1324,9 @@ function serverHopNow(immediate)
                         else
                             servers = other
                         end
+
+                        local maxCount = math.max(1, math.floor(tonumber(SETTINGS.serverHopRange) or 6))
+                        servers = pickRandomCandidates(servers, maxCount)
 
                         break
                     end
