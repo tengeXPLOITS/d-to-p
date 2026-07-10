@@ -726,7 +726,9 @@ serverMonitorLabel.Size = UDim2.new(0.9,0,0,22)
 addLabel(frames.Server, "Server Browser")
 local openBrowserBtn = addButton(frames.Server, "Open Server Browser", function()
     if ServerBrowserWindow then
+        positionServerBrowser()
         ServerBrowserWindow.Visible = not ServerBrowserWindow.Visible
+        if ServerBrowserWindow.Visible then pcall(refreshServerBrowser) end
     end
 end)
 
@@ -743,8 +745,24 @@ local ServerBrowserWindow = new(screen, "Frame", {
 pcall(function() new(ServerBrowserWindow, "UICorner", {CornerRadius = UDim.new(0,8)}) end)
 local sbHeader = new(ServerBrowserWindow, "Frame", {Size = UDim2.new(1,0,0,32), BackgroundColor3 = Color3.fromRGB(24,24,24)})
 local sbLabel = new(sbHeader, "TextLabel", {Text = "Server Browser", BackgroundTransparency = 1, TextColor3 = Color3.new(1,1,1), Font = Enum.Font.GothamBold, TextSize = 14, Position = UDim2.new(0,8,0,0), Size = UDim2.new(1,-44,1,0), TextXAlignment = Enum.TextXAlignment.Left})
+sbLabel.TextWrapped = false
+sbLabel.TextTruncate = Enum.TextTruncate.AtEnd
 local sbClose = new(sbHeader, "TextButton", {Text = "✕", Size = UDim2.new(0,32,0,24), Position = UDim2.new(1,-36,0,4), BackgroundColor3 = Color3.fromRGB(140,28,28), TextColor3 = Color3.new(1,1,1), AutoButtonColor = true})
 sbClose.MouseButton1Click:Connect(function() ServerBrowserWindow.Visible = false end)
+
+-- position server browser beneath the main window title and keep it aligned
+local function positionServerBrowser()
+    pcall(function()
+        local winPos = window.AbsolutePosition
+        local winSize = window.AbsoluteSize
+        local x = winPos.X + (winSize.X / 2)
+        local y = winPos.Y + 36 + 8
+        ServerBrowserWindow.AnchorPoint = Vector2.new(0.5, 0)
+        ServerBrowserWindow.Position = UDim2.new(0, x, 0, y)
+    end)
+end
+window:GetPropertyChangedSignal("AbsolutePosition"):Connect(positionServerBrowser)
+window:GetPropertyChangedSignal("AbsoluteSize"):Connect(positionServerBrowser)
 
 local serverList = new(ServerBrowserWindow, "ScrollingFrame", {Name = "ServerList", Position = UDim2.new(0,0,0,32), Size = UDim2.new(1,0,1,-32), BackgroundTransparency = 1, ScrollBarThickness = 8})
 local serverListLayout = new(serverList, "UIListLayout", {SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0,6)})
@@ -800,6 +818,17 @@ local function refreshServerBrowser()
         updateServerListCanvas()
     end)
 end
+
+-- small servers toggle button in title bar for quick access
+local titleServersBtn = new(titleBar, "TextButton", {Text = "Servers", Size = UDim2.new(0,96,0,24), Position = UDim2.new(1,-120,0,6), BackgroundColor3 = Color3.fromRGB(28,73,140), TextColor3 = Color3.new(1,1,1), Font = Enum.Font.Gotham, TextSize = 14, AutoButtonColor = true})
+pcall(function() new(titleServersBtn, "UICorner", {CornerRadius = UDim.new(0,6)}) end)
+titleServersBtn.MouseButton1Click:Connect(function()
+    if ServerBrowserWindow then
+        positionServerBrowser()
+        ServerBrowserWindow.Visible = not ServerBrowserWindow.Visible
+        if ServerBrowserWindow.Visible then pcall(refreshServerBrowser) end
+    end
+end)
 
 refreshServerMonitor()
 refreshServerBrowser()
