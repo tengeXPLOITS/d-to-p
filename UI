@@ -28,86 +28,6 @@ local function parseNumberValue(value)
     return tonumber(str)
 end
 
-local function normalizeWebhookUrl(value)
-    if value == nil then return "" end
-    local url = tostring(value)
-    url = string.gsub(url, "^%s+", "")
-    url = string.gsub(url, "%s+$", "")
-    return url
-end
-
-local function sendWebhookPayload(payload)
-    local webhookUrl = normalizeWebhookUrl(SETTINGS and SETTINGS.webhookUrl or "")
-    if webhookUrl == "" then
-        GLOBAL_ENV.DonateToPlayers_LastWebhookStatus = {ok = false, message = "No webhook URL"}
-        return false, "No webhook URL"
-    end
-
-    local body = HttpService:JSONEncode(payload)
-    local ok, err = pcall(function()
-        if syn and syn.request then
-            syn.request({
-                Url = webhookUrl,
-                Method = "POST",
-                Headers = { ["Content-Type"] = "application/json" },
-                Body = body,
-            })
-        elseif request then
-            request({
-                Url = webhookUrl,
-                Method = "POST",
-                Headers = { ["Content-Type"] = "application/json" },
-                Body = body,
-            })
-        elseif httprequest then
-            httprequest({
-                Url = webhookUrl,
-                Method = "POST",
-                Headers = { ["Content-Type"] = "application/json" },
-                Body = body,
-            })
-        elseif type(HttpService.PostAsync) == "function" then
-            HttpService:PostAsync(webhookUrl, body, Enum.HttpContentType.ApplicationJson)
-        else
-            error("No supported webhook request API")
-        end
-    end)
-
-    if ok then
-        GLOBAL_ENV.DonateToPlayers_LastWebhookStatus = {ok = true, message = "Sent (fire-and-forget)"}
-        return true, "Sent (fire-and-forget)"
-    end
-
-    local msg = tostring(err or "Unknown webhook error")
-    GLOBAL_ENV.DonateToPlayers_LastWebhookStatus = {ok = false, message = msg}
-    return false, msg
-end
-
-local function sendWebhookEvent(title, description, fields, options)
-    local webhookUrl = normalizeWebhookUrl(SETTINGS and SETTINGS.webhookUrl or "")
-    if webhookUrl == "" then
-        return false, "No webhook URL"
-    end
-    local embed = {
-        title = title or "Notification",
-        description = description or "",
-        color = (options and options.color) or 65344,
-        fields = fields or {},
-        timestamp = DateTime.now():ToIsoDate(),
-    }
-    if options and options.author then
-        embed.author = options.author
-    end
-    if options and options.footer then
-        embed.footer = options.footer
-    end
-    if options and options.thumbnail then
-        embed.thumbnail = options.thumbnail
-    end
-    local payload = { embeds = { embed } }
-    return sendWebhookPayload(payload)
-end
-
 local function ensureRaisedStat()
     local leaderstats = LocalPlayer:FindFirstChild("leaderstats")
     if not leaderstats then
@@ -192,74 +112,6 @@ local function simulateDonation(amount)
     return raised.Value
 end
 
-local function notifyDonationChange(amountReceived, currentRaised, currentPending)
-    if not amountReceived or amountReceived <= 0 then
-        return false, "No donation amount"
-    end
-    local playerName = tostring(LocalPlayer.Name or "Unknown")
-    local fields = {
-        {name = "Robux Received", value = "**" .. tostring(amountReceived) .. "**", inline = true},
-        {name = "Raised Total", value = "**" .. tostring(currentRaised or "Unknown") .. "**", inline = true},
-        {name = "Pending Robux", value = "**" .. tostring(currentPending or "Unknown") .. "**", inline = true},
-    }
-    return sendWebhookEvent("Donation Received", "**" .. playerName .. "** got donated 💸", fields, {
-        color = 0x00A2FF,
-        author = {name = "DonateToPlayers"},
-        footer = {text = "Pending R$ may not be accurate, so check in-game pls!"},
-    })
-end
-
-local function notifyScriptExecution()
-    return sendWebhookEvent("Donate UI Executed", "The donate UI script has been executed. This counts as a server hop.", {
-        {name = "Player", value = tostring(LocalPlayer.Name), inline = true},
-        {name = "Place", value = tostring(game.PlaceId), inline = true},
-    }, {
-        color = 0x7C4DFF,
-        author = {name = "DonateToPlayers"},
-    })
-end
-
-local function refreshDonationWatchers()
-    lastRaisedValue = getCurrentRaisedValue() or 0
-    lastPendingValue = getCurrentPendingValue() or 0
-    local raisedStat = findRaisedStat()
-    if raisedStat then
-        raisedStat.Changed:Connect(function(newValue)
-            local current = parseNumberValue(newValue)
-            if not current then return end
-            if lastRaisedValue and current > lastRaisedValue then
-                local diff = current - (lastRaisedValue or 0)
-                lastRaisedValue = current
-                lastPendingValue = getCurrentPendingValue() or lastPendingValue
-                notifyDonationChange(diff, current, lastPendingValue)
-            else
-                lastRaisedValue = current
-            end
-        end)
-    end
-    local function connectPendingWatch()
-        for _, desc in ipairs(LocalPlayer:GetDescendants()) do
-            if desc.Name == "PedingRobux" then
-                desc.DescendantAdded:Connect(function(child)
-                    if child.Name == "PedingRobuxList" or child.Name == "Pending" then
-                        child.Changed:Connect(function()
-                            lastPendingValue = getCurrentPendingValue() or lastPendingValue
-                        end)
-                    end
-                end)
-                for _, child in ipairs(desc:GetDescendants()) do
-                    if child.Name == "PedingRobuxList" or child.Name == "Pending" then
-                        child.Changed:Connect(function()
-                            lastPendingValue = getCurrentPendingValue() or lastPendingValue
-                        end)
-                    end
-                end
-                break
-            end
-        end
-    end
-    connectPendingWatch()
-end
 
 local function getExecutionKey()
     return tostring(LocalPlayer.UserId) .. ":" .. tostring(game.JobId)
@@ -318,7 +170,6 @@ local SETTINGS = {
     serverHopRange = 6, -- user-facing max 24
     serverPreferredPlayers = 0, -- 0 = disabled; exact player count to target
     boothPosition = "Front",
-    webhookUrl = "",
     -- main
     antiAfk = false,
 }
@@ -484,7 +335,6 @@ local tabs = {}
 tabs.booth = makeTabButton("Booth", tabRow)
 tabs.main = makeTabButton("Main", tabRow)
 tabs.server = makeTabButton("Server", tabRow)
-tabs.webhook = makeTabButton("Webhook", tabRow)
 
 -- Content area
 local content = new(window, "Frame", {
@@ -520,15 +370,10 @@ local frames = {
     Booth = makeContentFrame("Booth"),
     Main = makeContentFrame("Main"),
     Server = makeContentFrame("Server"),
-    Webhook = makeContentFrame("Webhook"),
 }
 
 frames.Booth.Visible = true
 
-task.spawn(function()
-    refreshDonationWatchers()
-    notifyScriptExecution()
-end)
 
 -- Simple control factory
 local function addLabel(parent, text)
@@ -978,7 +823,6 @@ end
 tabs.booth.MouseButton1Click:Connect(function() selectTab("Booth") end)
 tabs.main.MouseButton1Click:Connect(function() selectTab("Main") end)
 tabs.server.MouseButton1Click:Connect(function() selectTab("Server") end)
-tabs.webhook.MouseButton1Click:Connect(function() selectTab("Webhook") end)
 
 -- Small Main and Server content placeholders
 -- Main tab: Anti AFK toggle
@@ -1023,39 +867,6 @@ serverMonitorLabel = addLabel(frames.Server, "Checking servers...")
 serverMonitorLabel.TextSize = 13
 serverMonitorLabel.TextColor3 = Color3.fromRGB(180,180,180)
 serverMonitorLabel.Size = UDim2.new(0.9,0,0,22)
-
-addLabel(frames.Webhook, "Webhook Notifications")
-local webhookDesc = addLabel(frames.Webhook, "Enter a Discord webhook URL to receive notifications when the UI executes and when donations arrive.")
-webhookDesc.TextSize = 13
-webhookDesc.TextColor3 = Color3.fromRGB(180,180,180)
-webhookDesc.Size = UDim2.new(0.95,0,0,40)
-webhookDesc.TextYAlignment = Enum.TextYAlignment.Top
-local webhookBox = addTextBox(frames.Webhook, "Webhook URL", function(v)
-    SETTINGS.webhookUrl = tostring(v or "")
-    pcall(saveSettings)
-end)
-webhookBox.Text = SETTINGS.webhookUrl or ""
-local testDonationBtn = addButton(frames.Webhook, "Test Donation Webhook", function()
-    local webhookUrl = normalizeWebhookUrl(webhookBox and webhookBox.Text or "")
-    SETTINGS.webhookUrl = webhookUrl
-    pcall(saveSettings)
-    if webhookUrl == "" then
-        showNotification("Webhook URL is empty")
-        return
-    end
-    task.spawn(function()
-        simulateDonation(25)
-        task.wait(0.35)
-        local status = GLOBAL_ENV.DonateToPlayers_LastWebhookStatus or {ok = false, message = "No response"}
-        showNotification("Webhook status: " .. tostring(status.message or "Unknown"))
-    end)
-end)
-local clearWebhookBtn = addButton(frames.Webhook, "Clear Webhook", function()
-    SETTINGS.webhookUrl = ""
-    webhookBox.Text = ""
-    pcall(saveSettings)
-    showNotification("Webhook cleared")
-end)
 
 -- Server tab: Server stay, hop range, and immediate hop button
 
