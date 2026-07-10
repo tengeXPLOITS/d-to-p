@@ -163,7 +163,7 @@ local subtitle = new(window, "TextLabel", {
 -- Tab buttons
 local tabRow = new(window, "Frame", {
     Name = "TabRow",
-    Position = UDim2.new(0,8,0,40),
+    Position = UDim2.new(0,8,0,60),
     Size = UDim2.new(1,-16,0,36),
     BackgroundTransparency = 1,
 })
@@ -195,7 +195,7 @@ tabs.server = makeTabButton("Server", tabRow)
 -- Content area
 local content = new(window, "Frame", {
     Name = "Content",
-    Position = UDim2.new(0,8,0,84),
+    Position = UDim2.new(0,8,0,104),
     Size = UDim2.new(1,-16,1,-96),
     BackgroundTransparency = 1,
 })
@@ -727,8 +727,8 @@ addLabel(frames.Server, "Server Browser")
 local openBrowserBtn = addButton(frames.Server, "Open Server Browser", function()
     if ServerBrowserWindow then
         positionServerBrowser()
-        ServerBrowserWindow.Visible = not ServerBrowserWindow.Visible
-        if ServerBrowserWindow.Visible then pcall(refreshServerBrowser) end
+        ServerBrowserWindow.Visible = true
+        pcall(refreshServerBrowser)
     end
 end)
 
@@ -803,10 +803,11 @@ local function refreshServerBrowser()
                 local row = new(serverList, "Frame", {Size = UDim2.new(0.95,0,0,36), BackgroundColor3 = Color3.fromRGB(36,36,36), BorderSizePixel = 0})
                 pcall(function() new(row, "UICorner", {CornerRadius = UDim.new(0,6)}) end)
                 local label = new(row, "TextLabel", {Text = string.format("%s  •  %s  •  %s", tostring(v.id):sub(1,8), capacity, v.private and "Private" or "Public"), BackgroundTransparency = 1, TextColor3 = Color3.new(1,1,1), Font = Enum.Font.Gotham, TextSize = 13, Size = UDim2.new(1,-80,1,0), Position = UDim2.new(0,8,0,0), TextXAlignment = Enum.TextXAlignment.Left})
-                local joinBtn = new(row, "TextButton", {Text = "Join", Size = UDim2.new(0,64,0,28), Position = UDim2.new(1,-72,0,4), BackgroundColor3 = Color3.fromRGB(0,102,204), TextColor3 = Color3.new(1,1,1), Font = Enum.Font.Gotham, TextSize = 13})
+                local joinBtn = new(row, "TextButton", {Text = "Join", Size = UDim2.new(0,64,0,28), Position = UDim2.new(1,-72,0,4), BackgroundColor3 = Color3.fromRGB(0,170,85), TextColor3 = Color3.new(1,1,1), Font = Enum.Font.Gotham, TextSize = 13})
                 pcall(function() new(joinBtn, "UICorner", {CornerRadius = UDim.new(0,6)}) end)
                 joinBtn.MouseButton1Click:Connect(function()
                     pcall(function()
+                        pcall(queueLoadOnTeleport)
                         TeleportService:TeleportToPlaceInstance(tonumber(placeId) or placeId, v.id, LocalPlayer)
                     end)
                 end)
@@ -819,16 +820,7 @@ local function refreshServerBrowser()
     end)
 end
 
--- small servers toggle button in title bar for quick access
-local titleServersBtn = new(titleBar, "TextButton", {Text = "Servers", Size = UDim2.new(0,96,0,24), Position = UDim2.new(1,-120,0,6), BackgroundColor3 = Color3.fromRGB(28,73,140), TextColor3 = Color3.new(1,1,1), Font = Enum.Font.Gotham, TextSize = 14, AutoButtonColor = true})
-pcall(function() new(titleServersBtn, "UICorner", {CornerRadius = UDim.new(0,6)}) end)
-titleServersBtn.MouseButton1Click:Connect(function()
-    if ServerBrowserWindow then
-        positionServerBrowser()
-        ServerBrowserWindow.Visible = not ServerBrowserWindow.Visible
-        if ServerBrowserWindow.Visible then pcall(refreshServerBrowser) end
-    end
-end)
+-- title bar servers button removed; use in-tab button only
 
 refreshServerMonitor()
 refreshServerBrowser()
@@ -940,12 +932,52 @@ function serverHopNow(immediate)
                         end
                     end
                 end
-                if #preferred > 0 then
-                    servers = preferred
-                elseif #available > 0 then
-                    servers = available
+                if tonumber(SETTINGS.serverPreferredPlayers or 0) > 0 then
+                    if #preferred > 0 then
+                        servers = preferred
+                    else
+                        -- no exact matches: pick the server with the highest player count (prefer not-full servers)
+                        local bestId = nil
+                        local bestPlaying = -1
+                        for _, sv in ipairs(body.data) do
+                            if type(sv) == "table" and sv.id then
+                                local playing = tonumber(sv.playing) or 0
+                                local maxP = tonumber(sv.maxPlayers) or 0
+                                local notFull = (maxP > 0) and (playing < maxP) or true
+                                if notFull and playing > bestPlaying then
+                                    bestPlaying = playing
+                                    bestId = sv.id
+                                end
+                            end
+                        end
+                        if not bestId then
+                            -- if no not-full server found, pick absolute max
+                            for _, sv in ipairs(body.data) do
+                                if type(sv) == "table" and sv.id then
+                                    local playing = tonumber(sv.playing) or 0
+                                    if playing > bestPlaying then
+                                        bestPlaying = playing
+                                        bestId = sv.id
+                                    end
+                                end
+                            end
+                        end
+                        if bestId then
+                            servers = {bestId}
+                        elseif #available > 0 then
+                            servers = available
+                        else
+                            servers = other
+                        end
+                    end
                 else
-                    servers = other
+                    if #preferred > 0 then
+                        servers = preferred
+                    elseif #available > 0 then
+                        servers = available
+                    else
+                        servers = other
+                    end
                 end
             end
         end
