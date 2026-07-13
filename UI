@@ -349,6 +349,9 @@ local function loadSettings()
 end
 
 loadSettings()
+if not SETTINGS.selectedEmote or type(SETTINGS.selectedEmote) ~= "string" or SETTINGS.selectedEmote == "" then
+    SETTINGS.selectedEmote = EMOTE_OPTIONS[1].name
+end
 
 local function parseServerStayDuration(rawValue)
     if rawValue == nil then
@@ -839,6 +842,17 @@ local function teleportToBoothAndClaim(model)
     local anchorPart = claimedPart or model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart")
     if not anchorPart then return false end
 
+    local function getFacingDirection(cframe, towardPosition)
+        local front = cframe.LookVector
+        if towardPosition and (towardPosition - cframe.Position).Magnitude > 0 then
+            local toward = (towardPosition - cframe.Position).Unit
+            if front:Dot(toward) > 0 then
+                return -front
+            end
+        end
+        return front
+    end
+
     local function setPlayerPosition(pos, lookAt)
         pcall(function()
             local human = char:FindFirstChildOfClass("Humanoid")
@@ -921,19 +935,25 @@ local function teleportToBoothAndClaim(model)
     local dist = 7
     local approachCFrame = anchorPart.CFrame
     local approachOrigin = anchorPart.Position
+    local promptPosition = nil
+    local promptCFrame = nil
     if prompt and prompt.Parent then
         if prompt.Parent:IsA("Attachment") then
-            approachCFrame = prompt.Parent.WorldCFrame
-            approachOrigin = prompt.Parent.WorldPosition
+            promptCFrame = prompt.Parent.WorldCFrame
+            promptPosition = prompt.Parent.WorldPosition
+            approachCFrame = promptCFrame
+            approachOrigin = promptPosition
         elseif prompt.Parent:IsA("BasePart") then
-            approachCFrame = prompt.Parent.CFrame
-            approachOrigin = prompt.Parent.Position
+            promptCFrame = prompt.Parent.CFrame
+            promptPosition = prompt.Parent.Position
+            approachCFrame = promptCFrame
+            approachOrigin = promptPosition
         end
     end
-    local approachFront = approachCFrame.LookVector
+    local approachFront = getFacingDirection(approachCFrame, anchorPart.Position)
     local finalPos = approachOrigin + approachFront * dist
     finalPos = Vector3.new(finalPos.X, anchorPart.Position.Y + 2, finalPos.Z)
-    local boothFront = anchorPart.CFrame.LookVector
+    local boothFront = getFacingDirection(anchorPart.CFrame, anchorPart.Position)
     local boothOrigin = anchorPart.Position
 
     local function robustFirePrompt(promptObj)
@@ -1030,16 +1050,25 @@ local function teleportToBoothAndClaim(model)
 
     if okFire then
         task.wait(0.08)
-        setPlayerPosition(finalPos, finalPos + ((hrp.CFrame and hrp.CFrame.LookVector) or Vector3.new(0, 0, -1)))
+        local frontDir = getFacingDirection(promptCFrame or anchorPart.CFrame, anchorPart.Position)
+        setPlayerPosition(finalPos, finalPos + frontDir)
         task.wait(5.5)
-        local afterPos = boothOrigin + boothFront * dist
+        local boothFrontA = boothOrigin + boothFront * dist
+        local boothFrontB = boothOrigin - boothFront * dist
+        local afterPos = boothFrontA
+        if promptPosition and (boothFrontB - promptPosition).Magnitude < (boothFrontA - promptPosition).Magnitude then
+            afterPos = boothFrontB
+        end
         afterPos = Vector3.new(afterPos.X, anchorPart.Position.Y + 2, afterPos.Z)
-        setPlayerPosition(afterPos, afterPos + boothFront)
+        setPlayerPosition(afterPos, afterPos + frontDir)
+        task.wait(0.35)
+        setPlayerPosition(afterPos, afterPos + frontDir)
         return true
     end
 
     task.wait(0.08)
-    setPlayerPosition(finalPos, finalPos + ((hrp.CFrame and hrp.CFrame.LookVector) or Vector3.new(0, 0, -1)))
+    local fallbackDir = getFacingDirection(promptCFrame or anchorPart.CFrame, anchorPart.Position)
+    setPlayerPosition(finalPos, finalPos + fallbackDir)
     task.wait(0.12)
 
     if prompt then
@@ -1048,9 +1077,16 @@ local function teleportToBoothAndClaim(model)
 
     if okFire then
         task.wait(5.5)
-        local afterPos = boothOrigin + boothFront * dist
+        local boothFrontA = boothOrigin + boothFront * dist
+        local boothFrontB = boothOrigin - boothFront * dist
+        local afterPos = boothFrontA
+        if promptPosition and (boothFrontB - promptPosition).Magnitude < (boothFrontA - promptPosition).Magnitude then
+            afterPos = boothFrontB
+        end
         afterPos = Vector3.new(afterPos.X, anchorPart.Position.Y + 2, afterPos.Z)
-        setPlayerPosition(afterPos, afterPos + boothFront)
+        setPlayerPosition(afterPos, afterPos + fallbackDir)
+        task.wait(0.35)
+        setPlayerPosition(afterPos, afterPos + fallbackDir)
     end
     return okFire
 end
@@ -1072,7 +1108,7 @@ end
 
 -- Auto-run claim once UI loads (script already claims automatically)
 task.spawn(function()
-    task.wait(2)
+    task.wait(1.5)
     pcall(claimFirstAvailable)
 end)
 
@@ -1761,3 +1797,4 @@ local function onResize()
 end
 RunService.Heartbeat:Connect(onResize)
 onResize()
+
