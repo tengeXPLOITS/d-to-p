@@ -463,6 +463,11 @@ task.spawn(function()
     pcall(function()
         notifyScriptExecution()
     end)
+    pcall(function()
+        if type(fireBoothTextEvent) == "function" then
+            fireBoothTextEvent(SETTINGS and SETTINGS.boothText or "Any donation brightens my day! ❤️")
+        end
+    end)
 end)
 
 -- Window as plain Frame (no squiggle image)
@@ -700,6 +705,16 @@ local boothTextBox = new(frames.Booth, "TextBox", {
 pcall(function() new(boothTextBox, "UICorner", {CornerRadius = UDim.new(0, 8)}) end)
 pcall(function() new(boothTextBox, "UIStroke", {Color = Color3.fromRGB(80, 80, 80), Thickness = 1, Transparency = 0.35}) end)
 
+local boothTextLineBreakBtn = addButton(frames.Booth, "New Line", function()
+    local current = boothTextBox.Text or ""
+    boothTextBox.Text = current .. "\n"
+    pcall(function() boothTextBox:CaptureFocus() end)
+end)
+boothTextLineBreakBtn.Size = UDim2.new(0.95, 0, 0, 32)
+boothTextLineBreakBtn.TextSize = 13
+
+addLabel(frames.Booth, "Goal uses numbers only (example: 1000)")
+
 local boothTextSyncing = false
 local function fireBoothTextEvent(text)
     local payload = tostring(text or boothTextBox.Text or "")
@@ -717,6 +732,15 @@ local function fireBoothTextEvent(text)
             event:FireServer(payload)
         end)
     end
+end
+
+local function formatDonationProgressText(raised, goal, template)
+    local raisedText = tostring(math.floor(tonumber(raised) or 0))
+    local goalText = tostring(math.floor(tonumber(goal) or 0))
+    local text = tostring(template or "$C / $G")
+    text = string.gsub(text, "%$C", raisedText)
+    text = string.gsub(text, "%$G", goalText)
+    return text
 end
 
 local function updateDonationProgressText()
@@ -738,19 +762,22 @@ local function updateDonationProgressText()
         pcall(saveSettings)
     end
 
-    local displayText = tostring(math.floor(raised)) .. " / " .. tostring(goal)
-    if boothTextBox and boothTextBox.Text ~= displayText then
+    local template = tostring(SETTINGS.boothText or "$C / $G")
+    local displayText = formatDonationProgressText(raised, goal, template)
+    local resolvedText = displayText
+
+    if boothTextBox and boothTextBox.Text ~= template then
         boothTextSyncing = true
-        boothTextBox.Text = displayText
+        boothTextBox.Text = template
         boothTextSyncing = false
     end
 
-    if lastDonationTextValue ~= displayText then
-        lastDonationTextValue = displayText
-        SETTINGS.boothText = displayText
+    if lastDonationTextValue ~= resolvedText then
+        lastDonationTextValue = resolvedText
+        SETTINGS.boothText = resolvedText
         pcall(saveSettings)
         pcall(function()
-            fireBoothTextEvent(displayText)
+            fireBoothTextEvent(resolvedText)
         end)
     end
 end
