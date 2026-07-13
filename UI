@@ -684,9 +684,9 @@ local function addDropdown(parent, labelText, options, initial, callback)
     local collapsedHeight = 34
     local expandedHeight = collapsedHeight + (#options * 30)
     local container = new(parent, "Frame", {Size = UDim2.new(0.95,0,0,collapsedHeight), BackgroundTransparency = 1})
-    local label = new(container, "TextLabel", {Text = labelText, BackgroundTransparency = 1, TextColor3 = Color3.new(1,1,1), Font = Enum.Font.Gotham, TextSize = 14, Position = UDim2.new(0,0,0,0), Size = UDim2.new(0.3,0,0,1), TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Center})
+    local label = new(container, "TextLabel", {Text = labelText, BackgroundTransparency = 1, TextColor3 = Color3.new(1,1,1), Font = Enum.Font.Gotham, TextSize = 14, Position = UDim2.new(0,0,0,0), Size = UDim2.new(0.2,0,0,1), TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Center})
     local selected = initial or options[1]
-    local button = new(container, "TextButton", {Text = selected, Size = UDim2.new(0.65,0,0,1), Position = UDim2.new(0.33,0,0,0), BackgroundColor3 = Color3.fromRGB(28,73,140), TextColor3 = Color3.new(1,1,1), Font = Enum.Font.Gotham, TextSize = 14, AutoButtonColor = true})
+    local button = new(container, "TextButton", {Text = selected, Size = UDim2.new(0.75,0,0,1), Position = UDim2.new(0.25,0,0,0), BackgroundColor3 = Color3.fromRGB(28,73,140), TextColor3 = Color3.new(1,1,1), Font = Enum.Font.Gotham, TextSize = 14, AutoButtonColor = true})
     local optionFrame = new(container, "Frame", {Position = UDim2.new(0,0,0,collapsedHeight), Size = UDim2.new(1,0,0,0), BackgroundColor3 = Color3.fromRGB(24,24,24), BorderSizePixel = 0, ClipsDescendants = true})
     local optionLayout = new(optionFrame, "UIListLayout", {Padding = UDim.new(0,2), FillDirection = Enum.FillDirection.Vertical, SortOrder = Enum.SortOrder.LayoutOrder})
     local expanded = false
@@ -919,20 +919,22 @@ local function teleportToBoothAndClaim(model)
     end
 
     local dist = 7
-    local claimCFrame = anchorPart.CFrame
-    local claimOrigin = anchorPart.Position
+    local approachCFrame = anchorPart.CFrame
+    local approachOrigin = anchorPart.Position
     if prompt and prompt.Parent then
         if prompt.Parent:IsA("Attachment") then
-            claimCFrame = prompt.Parent.WorldCFrame
-            claimOrigin = prompt.Parent.WorldPosition
+            approachCFrame = prompt.Parent.WorldCFrame
+            approachOrigin = prompt.Parent.WorldPosition
         elseif prompt.Parent:IsA("BasePart") then
-            claimCFrame = prompt.Parent.CFrame
-            claimOrigin = prompt.Parent.Position
+            approachCFrame = prompt.Parent.CFrame
+            approachOrigin = prompt.Parent.Position
         end
     end
-    local front = claimCFrame.LookVector
-    local finalPos = claimOrigin + front * dist
+    local approachFront = approachCFrame.LookVector
+    local finalPos = approachOrigin + approachFront * dist
     finalPos = Vector3.new(finalPos.X, anchorPart.Position.Y + 2, finalPos.Z)
+    local boothFront = anchorPart.CFrame.LookVector
+    local boothOrigin = anchorPart.Position
 
     local function robustFirePrompt(promptObj)
         if not promptObj then
@@ -1030,9 +1032,9 @@ local function teleportToBoothAndClaim(model)
         task.wait(0.08)
         setPlayerPosition(finalPos, finalPos + ((hrp.CFrame and hrp.CFrame.LookVector) or Vector3.new(0, 0, -1)))
         task.wait(5.5)
-        local afterPos = claimOrigin + front * dist
+        local afterPos = boothOrigin + boothFront * dist
         afterPos = Vector3.new(afterPos.X, anchorPart.Position.Y + 2, afterPos.Z)
-        setPlayerPosition(afterPos, afterPos + front)
+        setPlayerPosition(afterPos, afterPos + boothFront)
         return true
     end
 
@@ -1046,9 +1048,9 @@ local function teleportToBoothAndClaim(model)
 
     if okFire then
         task.wait(5.5)
-        local afterPos = claimOrigin + front * dist
+        local afterPos = boothOrigin + boothFront * dist
         afterPos = Vector3.new(afterPos.X, anchorPart.Position.Y + 2, afterPos.Z)
-        setPlayerPosition(afterPos, afterPos + front)
+        setPlayerPosition(afterPos, afterPos + boothFront)
     end
     return okFire
 end
@@ -1759,4 +1761,3 @@ local function onResize()
 end
 RunService.Heartbeat:Connect(onResize)
 onResize()
-
