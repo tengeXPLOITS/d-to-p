@@ -1630,4 +1630,4 @@ end
 RunService.Heartbeat:Connect(onResize)
 onResize()
 
-print("HAaland 4 the win!!!!")
+print("updated july 13!")
