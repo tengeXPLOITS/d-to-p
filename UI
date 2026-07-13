@@ -313,6 +313,7 @@ local SETTINGS = {
     -- server hop settings
     autoServerHop = false,
     antiNonBusyServers = false,
+    serverStayDuration = "5m",
     serverStayMinutes = 5,
     serverHopRange = 6, -- user-facing max 24
     serverPreferredPlayers = 0, -- 0 = disabled; exact player count to target
@@ -347,6 +348,64 @@ local function loadSettings()
 end
 
 loadSettings()
+
+local function parseServerStayDuration(rawValue)
+    if rawValue == nil then
+        return nil
+    end
+
+    if type(rawValue) == "number" then
+        return math.max(1, math.floor(rawValue * 60))
+    end
+
+    local text = tostring(rawValue)
+    text = string.gsub(text, "%s+", "")
+    if text == "" then
+        return nil
+    end
+
+    local unit = string.sub(text, -1)
+    local valueText = text
+    if unit == "s" or unit == "m" or unit == "h" then
+        valueText = string.sub(text, 1, -2)
+    end
+
+    local value = tonumber(valueText)
+    if not value then
+        return nil
+    end
+
+    if unit == "s" then
+        return math.max(1, math.floor(value))
+    elseif unit == "m" then
+        return math.max(1, math.floor(value * 60))
+    elseif unit == "h" then
+        return math.max(1, math.floor(value * 3600))
+    end
+
+    return math.max(1, math.floor(value * 60))
+end
+
+local function getServerStayDurationSeconds()
+    local parsed = parseServerStayDuration(SETTINGS.serverStayDuration or SETTINGS.serverStayMinutes)
+    if parsed then
+        return parsed
+    end
+    return 300
+end
+
+local function formatDurationSeconds(seconds)
+    local total = math.max(1, math.floor(tonumber(seconds) or 0))
+    if total >= 60 then
+        local mins = math.floor(total / 60)
+        local secs = total % 60
+        if secs == 0 then
+            return tostring(mins) .. "m"
+        end
+        return tostring(mins) .. "m " .. tostring(secs) .. "s"
+    end
+    return tostring(total) .. "s"
+end
 
 -- Helpers
 local function new(parent, class, props)
@@ -1100,14 +1159,24 @@ task.spawn(function()
     end
 end)
 
-addLabel(frames.Server, "Server stay (minutes)")
-local stayBox = addTextBox(frames.Server, tostring(SETTINGS.serverStayMinutes), function(v)
-    local n = tonumber(v)
-    if n and n > 0 then SETTINGS.serverStayMinutes = n end
-    stayBox.Text = tostring(SETTINGS.serverStayMinutes)
-    pcall(saveSettings)
+addLabel(frames.Server, "Server stay (e.g. 20s, 20m)")
+local stayBox = addTextBox(frames.Server, tostring(SETTINGS.serverStayDuration or SETTINGS.serverStayMinutes or "5m"), function(v)
+    local raw = tostring(v or "")
+    raw = string.gsub(raw, "%s+", "")
+    if raw == "" then
+        raw = SETTINGS.serverStayDuration or "5m"
+    end
+    local parsedSeconds = parseServerStayDuration(raw)
+    if parsedSeconds then
+        SETTINGS.serverStayDuration = raw
+        SETTINGS.serverStayMinutes = math.max(1, math.floor(parsedSeconds / 60))
+        autoHopVersion = autoHopVersion + 1
+        pcall(saveSettings)
+        showNotification("Next server hop in " .. formatDurationSeconds(parsedSeconds))
+    end
+    stayBox.Text = tostring(SETTINGS.serverStayDuration or SETTINGS.serverStayMinutes or "5m")
 end)
-stayBox.Text = tostring(SETTINGS.serverStayMinutes)
+stayBox.Text = tostring(SETTINGS.serverStayDuration or SETTINGS.serverStayMinutes or "5m")
 
 addLabel(frames.Server, "Server hop range (max 24)")
 local rangeBox = addTextBox(frames.Server, tostring(SETTINGS.serverHopRange), function(v)
@@ -1368,16 +1437,26 @@ function serverHopNow(immediate)
 end
 
 -- Auto-hop loop (checks SETTINGS.autoServerHop)
+local autoHopVersion = 0
+
 task.spawn(function()
     while true do
         if SETTINGS.autoServerHop then
-            local mins = math.max(0.1, (SETTINGS.serverStayMinutes or 5))
-            local shouldTriggerBusyHop = SETTINGS.antiNonBusyServers and (Players.NumPlayers or 0) < SERVER_HOP_MIN_PLAYERS
-            if shouldTriggerBusyHop then
-                pcall(function() serverHopNow(false) end)
-                task.wait(5)
-            else
-                task.wait(mins * 60)
+            local version = autoHopVersion
+            local delaySeconds = getServerStayDurationSeconds()
+            local delayText = formatDurationSeconds(delaySeconds)
+            showNotification("Next server hop in " .. delayText)
+
+            local elapsed = 0
+            while elapsed < delaySeconds do
+                task.wait(1)
+                if autoHopVersion ~= version or not SETTINGS.autoServerHop then
+                    break
+                end
+                elapsed = elapsed + 1
+            end
+
+            if SETTINGS.autoServerHop and autoHopVersion == version then
                 pcall(function() serverHopNow(false) end)
             end
         else
@@ -1423,4 +1502,4 @@ end
 RunService.Heartbeat:Connect(onResize)
 onResize()
 
-print("HAaland 4 the win!!!!")
+print("@youdontknow me on all social media platforms")
