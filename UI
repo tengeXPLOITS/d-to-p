@@ -300,7 +300,6 @@ local SETTINGS = {
     antiNonBusyServers = false,
     serverStayDuration = "5m",
     serverStayMinutes = 5,
-    serverHopRange = 6, -- user-facing max 24
     serverPreferredPlayers = "0", -- 0 = disabled; exact player count or range to target
     boothPosition = "Front",
     webhookUrl = "",
@@ -310,6 +309,8 @@ local SETTINGS = {
 }
 
 local SERVER_HOP_MIN_PLAYERS = 13
+local SERVER_HOP_FALLBACK_MIN_PLAYERS = 17
+local SERVER_HOP_FALLBACK_MAX_PLAYERS = 22
 
 -- persistence helpers
 local SETTINGS_FILE = "donatetoplayers_settings.json"
@@ -984,74 +985,6 @@ local function teleportToBoothAndClaim(model)
     return okFire
 end
 
-local serverMonitorLabel = nil
-
-local serverMonitorLabel = nil
-local serverPlayersLabel = nil
-
-local function updateServerMonitor(count, currentPlayers)
-    local playerCount = tonumber(currentPlayers) or tonumber(Players.NumPlayers) or 0
-    local serverCount = tonumber(count) or 0
-    if serverMonitorLabel then
-        serverMonitorLabel.Text = "Active servers: " .. tostring(serverCount)
-    end
-    if serverPlayersLabel then
-        serverPlayersLabel.Text = "• Current server players: " .. tostring(playerCount)
-        if playerCount < 14 then
-            serverPlayersLabel.TextColor3 = Color3.fromRGB(255, 80, 80)
-        else
-            serverPlayersLabel.TextColor3 = Color3.fromRGB(80, 220, 80)
-        end
-    end
-    if notifCountLabel then
-        notifCountLabel.Text = "Current server players: " .. tostring(playerCount)
-        if playerCount < 14 then
-            notifCountLabel.TextColor3 = Color3.fromRGB(255, 80, 80)
-        else
-            notifCountLabel.TextColor3 = Color3.fromRGB(80, 220, 80)
-        end
-    end
-end
-
-local function refreshServerMonitor()
-    task.spawn(function()
-        local placeId = tostring(getHopPlaceId())
-        local url = "https://games.roblox.com/v1/games/" .. placeId .. "/servers/Public?sortOrder=Desc&limit=100"
-        local ok, res = pcall(function()
-            if httprequest then
-                local r = httprequest({Url = url, Method = "GET", Headers = { ["User-Agent"] = "Roblox" }})
-                return r and (r.Body or r.body or r.responseBody or r.text)
-            elseif type(HttpService.GetAsync) == "function" then
-                return HttpService:GetAsync(url)
-            else
-                return game:HttpGet(url)
-            end
-        end)
-
-        if ok and res then
-            local body = nil
-            pcall(function() body = HttpService:JSONDecode(res) end)
-            if body and body.data then
-                local available = 0
-                for _, v in ipairs(body.data) do
-                    if type(v) == "table" and v.id then
-                        local playing = tonumber(v.playing)
-                        local maxP = tonumber(v.maxPlayers)
-                        if playing and maxP and playing < maxP then
-                            available = available + 1
-                        end
-                    end
-                end
-                updateServerMonitor(available, Players.NumPlayers)
-            else
-                updateServerMonitor(0, Players.NumPlayers)
-            end
-        else
-            updateServerMonitor(0, Players.NumPlayers)
-        end
-    end)
-end
-
 local function claimFirstAvailable()
     local b = findAvailableBooth()
     if not b then
@@ -1070,7 +1003,6 @@ end
 -- Auto-run claim once UI loads (script already claims automatically)
 task.spawn(function()
     task.wait(2)
-    pcall(refreshServerMonitor)
     pcall(claimFirstAvailable)
 end)
 
@@ -1177,16 +1109,6 @@ local antiNonBusyToggle, _ = addToggle(frames.Server, "Anti non-busy servers", S
     pcall(saveSettings)
 end)
 
-addLabel(frames.Server, "Server Monitor")
-serverMonitorLabel = addLabel(frames.Server, "Active servers: 0")
-serverMonitorLabel.TextSize = 13
-serverMonitorLabel.TextColor3 = Color3.fromRGB(180,180,180)
-serverMonitorLabel.Size = UDim2.new(0.9,0,0,22)
-serverPlayersLabel = addLabel(frames.Server, "• Current server players: 0")
-serverPlayersLabel.TextSize = 13
-serverPlayersLabel.TextColor3 = Color3.fromRGB(255,80,80)
-serverPlayersLabel.Size = UDim2.new(0.9,0,0,22)
-
 -- Webhook tab: UI execution test only
 addLabel(frames.Webhook, "Webhook Notifications")
 local webhookDesc = addLabel(frames.Webhook, "Enter a Discord webhook URL to test the UI execution notification.")
@@ -1227,15 +1149,7 @@ local clearWebhookBtn = addButton(frames.Webhook, "Clear Webhook", function()
     showNotification("Webhook cleared")
 end)
 
--- Server tab: Server stay, hop range, and immediate hop button
-
-refreshServerMonitor()
-task.spawn(function()
-    while true do
-        task.wait(30)
-        pcall(refreshServerMonitor)
-    end
-end)
+-- Server tab: Server stay and immediate hop button
 
 addLabel(frames.Server, "Server stay (e.g. 20s, 20m)")
 local stayBox = addTextBox(frames.Server, tostring(SETTINGS.serverStayDuration or SETTINGS.serverStayMinutes or "5m"), function(v)
@@ -1255,20 +1169,6 @@ local stayBox = addTextBox(frames.Server, tostring(SETTINGS.serverStayDuration o
     stayBox.Text = tostring(SETTINGS.serverStayDuration or SETTINGS.serverStayMinutes or "5m")
 end)
 stayBox.Text = tostring(SETTINGS.serverStayDuration or SETTINGS.serverStayMinutes or "5m")
-
-addLabel(frames.Server, "Server hop range (max 24)")
-local rangeBox = addTextBox(frames.Server, tostring(SETTINGS.serverHopRange), function(v)
-    local n = tonumber(v)
-    if n then
-        n = math.floor(n)
-        if n < 1 then n = 1 end
-        if n > 24 then n = 24 end
-        SETTINGS.serverHopRange = n
-    end
-    rangeBox.Text = tostring(SETTINGS.serverHopRange)
-    pcall(saveSettings)
-end)
-rangeBox.Text = tostring(SETTINGS.serverHopRange)
 
 addLabel(frames.Server, "Preferred players or range (0 = any)")
 local prefBox = addTextBox(frames.Server, tostring(SETTINGS.serverPreferredPlayers), function(v)
@@ -1495,11 +1395,11 @@ function serverHopNow(immediate)
                                 local playing = tonumber(v.playing) or 0
                                 local maxP = tonumber(v.maxPlayers) or 0
                                 local notFull = (maxP > 0) and (playing < maxP) or true
-                                if prefRange.max > 0 and notFull then
+                                if prefRange.max > 0 and notFull and prefersServer(playing, prefRange) then
                                     table.insert(preferred, { id = v.id, playing = playing, maxPlayers = maxP })
                                 elseif minPlayers > 0 and playing >= minPlayers and notFull then
                                     table.insert(busy, v.id)
-                                elseif playing and maxP and playing >= SERVER_HOP_MIN_PLAYERS and playing < maxP then
+                                elseif playing and maxP and playing >= SERVER_HOP_FALLBACK_MIN_PLAYERS and playing <= SERVER_HOP_FALLBACK_MAX_PLAYERS and playing < maxP then
                                     table.insert(highPop, v.id)
                                 elseif playing and maxP and playing < maxP then
                                     table.insert(available, v.id)
@@ -1514,10 +1414,7 @@ function serverHopNow(immediate)
 
                         if prefRange.max > 0 and #preferred > 0 then
                             preferred = sortCandidatesByPreferred(preferred, prefRange)
-                            local maxCount = math.max(1, math.floor(tonumber(SETTINGS.serverHopRange) or 6))
-                            for i = 1, math.min(#preferred, maxCount) do
-                                table.insert(servers, preferred[i].id)
-                            end
+                            servers = { preferred[1].id }
                         elseif minPlayers > 0 then
                             servers = busy
                             if #servers == 0 then
@@ -1535,19 +1432,18 @@ function serverHopNow(immediate)
                             servers = other
                         end
 
-                        local maxCount = math.max(1, math.floor(tonumber(SETTINGS.serverHopRange) or 6))
                         if prefRange.max > 0 and #servers == 0 then
                             if #highPop > 0 then
-                                servers = highPop
+                                servers = { highPop[1] }
                             elseif #available > 0 then
-                                servers = available
+                                servers = { available[1] }
                             elseif #other > 0 then
-                                servers = other
+                                servers = { other[1] }
                             end
                         end
 
-                        if #servers > 0 then
-                            servers = pickRandomCandidates(servers, maxCount)
+                        if #servers > 1 then
+                            servers = pickRandomCandidates(servers, 1)
                         end
 
                         break
@@ -1558,9 +1454,8 @@ function serverHopNow(immediate)
             end
 
             if #servers == 0 then
-                updateServerMonitor(availableServerCount, Players.NumPlayers)
+                -- no matching server found
             else
-                updateServerMonitor(availableServerCount, Players.NumPlayers)
                 local instanceId = servers[math.random(1, #servers)]
                 local ok, err = tryTeleportToServer(placeId, instanceId)
                 if ok then
@@ -1675,5 +1570,3 @@ local function onResize()
 end
 RunService.Heartbeat:Connect(onResize)
 onResize()
-
-print("HAaland 4 the win!!!!")
