@@ -254,9 +254,6 @@ local function checkDonationWebhook()
             lastRaisedValue = raised
         end
 
-        if SETTINGS.donationTextUpdateEnabled ~= false then
-            pcall(updateDonationProgressText)
-        end
     end
 end
 
@@ -317,9 +314,6 @@ local SETTINGS = {
     boothPosition = "Front",
     webhookUrl = "",
     boothText = "Any donation brightens my day! ❤️",
-    donationTextUpdateEnabled = true,
-    donationGoal = 1000,
-    donationGoalIncrease = 500,
     -- main
     antiAfk = false,
 }
@@ -715,46 +709,31 @@ boothTextLineBreakBtn.TextSize = 13
 
 local boothTextSaveBtn = addButton(frames.Booth, "Save Text", function()
     local payload = boothTextBox.Text or ""
-    local template = tostring(payload or "")
-    SETTINGS.boothText = template
-    SETTINGS.boothTextTemplate = template
+    local text = tostring(payload or "")
+    SETTINGS.boothText = text
     pcall(saveSettings)
     pcall(function()
-        fireBoothTextEvent(template)
+        local eventsFolder = game:GetService("ReplicatedStorage"):FindFirstChild("Events")
+        if eventsFolder then
+            local event = eventsFolder:FindFirstChild("SetBoothText")
+            if event and event:IsA("RemoteEvent") then
+                event:FireServer(text)
+            end
+        end
     end)
     showNotification("Booth text saved")
 end)
 boothTextSaveBtn.Size = UDim2.new(0.95, 0, 0, 32)
 boothTextSaveBtn.TextSize = 13
 
-addLabel(frames.Booth, "Goal uses numbers only (example: 1000)")
-
 local boothTextSyncing = false
-local function getBoothTemplateText()
-    local template = SETTINGS.boothTextTemplate or SETTINGS.boothText
-    if template == nil then
-        template = "$C / $G"
-    end
-    return tostring(template)
-end
-
-local function setBoothTemplateText(text)
-    local template = tostring(text or "")
-    SETTINGS.boothText = template
-    SETTINGS.boothTextTemplate = template
-    pcall(saveSettings)
-    return template
-end
-
 local function fireBoothTextEvent(text)
-    local template = tostring(text or boothTextBox.Text or "")
-    local raised = getCurrentRaisedValue() or 0
-    local goal = math.max(1, math.floor(tonumber(SETTINGS.donationGoal) or 1000))
-    local payload = formatDonationProgressText(raised, goal, template)
-    setBoothTemplateText(template)
+    local payload = tostring(text or boothTextBox.Text or "")
+    SETTINGS.boothText = payload
+    pcall(saveSettings)
     if boothTextBox then
         boothTextSyncing = true
-        boothTextBox.Text = template
+        boothTextBox.Text = payload
         boothTextSyncing = false
     end
     local ok, event = pcall(function()
@@ -771,88 +750,6 @@ local function fireBoothTextEvent(text)
     end
     return payload
 end
-
-local function formatDonationProgressText(raised, goal, template)
-    local raisedText = tostring(math.floor(tonumber(raised) or 0))
-    local goalText = tostring(math.floor(tonumber(goal) or 0))
-    local text = tostring(template or "$C / $G")
-    text = string.gsub(text, "%$[Cc]", raisedText)
-    text = string.gsub(text, "%$[Gg]", goalText)
-    return text
-end
-
-local function updateDonationProgressText()
-    if SETTINGS.donationTextUpdateEnabled == false then
-        return
-    end
-
-    local raised = getCurrentRaisedValue()
-    if raised == nil then
-        return
-    end
-
-    local goal = math.max(1, math.floor(tonumber(SETTINGS.donationGoal) or 1000))
-    local increaseBy = math.max(1, math.floor(tonumber(SETTINGS.donationGoalIncrease) or 500))
-
-    if raised >= goal then
-        goal = goal + increaseBy
-        SETTINGS.donationGoal = goal
-        pcall(saveSettings)
-    end
-
-    local template = getBoothTemplateText()
-    local displayText = formatDonationProgressText(raised, goal, template)
-    local resolvedText = displayText
-
-    if boothTextBox and boothTextBox.Text ~= template then
-        boothTextSyncing = true
-        boothTextBox.Text = template
-        boothTextSyncing = false
-    end
-
-    if lastDonationTextValue ~= resolvedText then
-        lastDonationTextValue = resolvedText
-        SETTINGS.lastResolvedBoothText = resolvedText
-        pcall(saveSettings)
-        pcall(function()
-            fireBoothTextEvent(template)
-        end)
-    end
-end
-
-addLabel(frames.Booth, "Donation Goal")
-local donationGoalBox = addTextBox(frames.Booth, tostring(SETTINGS.donationGoal or 1000), function(v)
-    local n = tonumber(v)
-    if n then
-        n = math.max(1, math.floor(n))
-        SETTINGS.donationGoal = n
-        pcall(saveSettings)
-        pcall(updateDonationProgressText)
-    end
-end)
-donationGoalBox.Text = tostring(SETTINGS.donationGoal or 1000)
-
-addLabel(frames.Booth, "Goal Increase Amount")
-local donationIncreaseBox = addTextBox(frames.Booth, tostring(SETTINGS.donationGoalIncrease or 500), function(v)
-    local n = tonumber(v)
-    if n then
-        n = math.max(1, math.floor(n))
-        SETTINGS.donationGoalIncrease = n
-        pcall(saveSettings)
-        pcall(updateDonationProgressText)
-    end
-end)
-donationIncreaseBox.Text = tostring(SETTINGS.donationGoalIncrease or 500)
-
-local donationTextToggle, _ = addToggle(frames.Booth, "Auto update booth text on donation", SETTINGS.donationTextUpdateEnabled ~= false, function(b)
-    SETTINGS.donationTextUpdateEnabled = b and true or false
-    pcall(saveSettings)
-    if SETTINGS.donationTextUpdateEnabled ~= false then
-        pcall(updateDonationProgressText)
-    end
-end)
-
-donationTextToggle:Set(SETTINGS.donationTextUpdateEnabled ~= false)
 
 local boothTextEditCooldown = false
 boothTextBox:GetPropertyChangedSignal("Text"):Connect(function()
