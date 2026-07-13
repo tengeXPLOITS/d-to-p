@@ -971,7 +971,22 @@ local function teleportToBoothAndClaim(model)
     end
     local boothFront = getBoothFrontDirection()
     local boothHalfDepth = math.abs(boothFront:Dot(boothCFrame.RightVector)) * boothSize.X/2 + math.abs(boothFront:Dot(boothCFrame.LookVector)) * boothSize.Z/2
-    local boothDistance = boothHalfDepth + 4
+    local boothDistance = boothHalfDepth + 2.5
+    local function getAfterClaimPosition()
+        local yPos = anchorPart.Position.Y + 2
+        local frontFace = boothOrigin + boothFront * boothHalfDepth
+        local offsetDistance = 1.75
+        if promptPosition then
+            local promptDelta = Vector3.new(promptPosition.X - boothOrigin.X, 0, promptPosition.Z - boothOrigin.Z)
+            local lateralAxis = Vector3.new(-boothFront.Z, 0, boothFront.X)
+            local lateralOffset = lateralAxis:Dot(promptDelta)
+            local sidePos = frontFace + lateralAxis * lateralOffset
+            local finalPos = sidePos + boothFront * offsetDistance
+            return Vector3.new(finalPos.X, yPos, finalPos.Z)
+        end
+        local fallbackPos = boothOrigin + boothFront * (boothHalfDepth + offsetDistance)
+        return Vector3.new(fallbackPos.X, yPos, fallbackPos.Z)
+    end
 
     local function robustFirePrompt(promptObj)
         if not promptObj then
@@ -1070,7 +1085,7 @@ local function teleportToBoothAndClaim(model)
         local frontDir = getFacingDirection(promptCFrame or anchorPart.CFrame, anchorPart.Position)
         setPlayerPosition(finalPos, finalPos + frontDir)
         task.wait(5.5)
-        local afterPos = Vector3.new((boothOrigin + boothFront * boothDistance).X, anchorPart.Position.Y + 2, (boothOrigin + boothFront * boothDistance).Z)
+        local afterPos = getAfterClaimPosition()
         setPlayerPosition(afterPos, afterPos + boothFront)
         task.wait(0.35)
         setPlayerPosition(afterPos, afterPos + boothFront)
@@ -1088,7 +1103,7 @@ local function teleportToBoothAndClaim(model)
 
     if okFire then
         task.wait(5.5)
-        local afterPos = Vector3.new((boothOrigin + boothFront * boothDistance).X, anchorPart.Position.Y + 2, (boothOrigin + boothFront * boothDistance).Z)
+        local afterPos = getAfterClaimPosition()
         setPlayerPosition(afterPos, afterPos + boothFront)
         task.wait(0.35)
         setPlayerPosition(afterPos, afterPos + boothFront)
