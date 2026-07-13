@@ -136,6 +136,34 @@ local function getActiveWebhookUrl()
     return normalizeWebhookUrl(SETTINGS and SETTINGS.webhookUrl or "")
 end
 
+local function parsePreferredPlayerTarget(rawValue)
+    local text = tostring(rawValue or "")
+    text = string.gsub(text, "%s+", "")
+    if text == "" or text == "0" then
+        return { min = 0, max = 0 }
+    end
+
+    local lo, hi = string.match(text, "^(%d+)%-(%d+)$")
+    if lo and hi then
+        lo = tonumber(lo)
+        hi = tonumber(hi)
+        if lo and hi then
+            if lo > hi then
+                lo, hi = hi, lo
+            end
+            return { min = lo, max = hi }
+        end
+    end
+
+    local num = tonumber(text)
+    if num and num >= 0 then
+        num = math.floor(num)
+        return { min = num, max = num }
+    end
+
+    return { min = 0, max = 0 }
+end
+
 local function sendWebhookPayload(payload)
     local webhookUrl = getActiveWebhookUrl()
     if webhookUrl == "" then
@@ -220,23 +248,6 @@ local function notifyScriptExecution()
     })
 end
 
-local function notifyServerHopExecution(reason, placeId, instanceId)
-    local placeValue = tostring(placeId or HOP_PLACE_ID or game.PlaceId)
-    local playerCount = tonumber(Players.NumPlayers) or 0
-    local description = "Script executed. " .. tostring(LocalPlayer.Name) .. " has teleported/joined.\n• Place ID: " .. placeValue .. "\n• Players in server: " .. tostring(playerCount)
-    local color = (playerCount < 14) and 0xFF4D4D or 0x2ECC71
-    return sendWebhookEvent("Server Hop Executed", description, {
-        { name = "Player", value = tostring(LocalPlayer.Name), inline = true },
-        { name = "Reason", value = tostring(reason or "manual"), inline = true },
-        { name = "Place", value = placeValue, inline = true },
-        { name = "Server", value = tostring(instanceId or "pending"), inline = true },
-    }, {
-        color = color,
-        author = { name = "DonateToPlayers" },
-    })
-end
-
-
 local function IsInOkfeanCommunity()
     if game.CreatorId == COMMUNITY_ID and game.CreatorType == Enum.CreatorType.Group then
         return true
@@ -290,7 +301,7 @@ local SETTINGS = {
     serverStayDuration = "5m",
     serverStayMinutes = 5,
     serverHopRange = 6, -- user-facing max 24
-    serverPreferredPlayers = 0, -- 0 = disabled; exact player count to target
+    serverPreferredPlayers = "0", -- 0 = disabled; exact player count or range to target
     boothPosition = "Front",
     webhookUrl = "",
     boothText = "Any donation brightens my day! ❤️",
@@ -298,7 +309,7 @@ local SETTINGS = {
     antiAfk = false,
 }
 
-local SERVER_HOP_MIN_PLAYERS = 14
+local SERVER_HOP_MIN_PLAYERS = 13
 
 -- persistence helpers
 local SETTINGS_FILE = "donatetoplayers_settings.json"
@@ -1259,13 +1270,15 @@ local rangeBox = addTextBox(frames.Server, tostring(SETTINGS.serverHopRange), fu
 end)
 rangeBox.Text = tostring(SETTINGS.serverHopRange)
 
-addLabel(frames.Server, "Preferred players (0 = any)")
+addLabel(frames.Server, "Preferred players or range (0 = any)")
 local prefBox = addTextBox(frames.Server, tostring(SETTINGS.serverPreferredPlayers), function(v)
-    local n = tonumber(v)
-    if n then
-        n = math.floor(n)
-        if n < 0 then n = 0 end
-        SETTINGS.serverPreferredPlayers = n
+    local sanitized = tostring(v or "")
+    sanitized = string.gsub(sanitized, "%s+", "")
+    if sanitized == "" then
+        sanitized = "0"
+    end
+    if tonumber(sanitized) or string.match(sanitized, "^%d+%-%d+$") then
+        SETTINGS.serverPreferredPlayers = sanitized
     end
     prefBox.Text = tostring(SETTINGS.serverPreferredPlayers)
     pcall(saveSettings)
@@ -1294,28 +1307,36 @@ local function pickRandomCandidates(list, maxCount)
     return out
 end
 
-local function sortCandidatesByPreferred(candidates, prefTarget)
-    local target = math.max(0, tonumber(prefTarget) or 0)
+local function prefersServer(playing, prefRange)
+    return prefRange.max > 0 and playing >= prefRange.min and playing <= prefRange.max
+end
+
+local function preferredDistance(playing, prefRange)
+    if prefRange.max <= 0 then
+        return math.huge
+    end
+    if playing < prefRange.min then
+        return prefRange.min - playing
+    end
+    if playing > prefRange.max then
+        return playing - prefRange.max
+    end
+    return 0
+end
+
+local function sortCandidatesByPreferred(candidates, prefRange)
     table.sort(candidates, function(a, b)
         local aPlaying = tonumber(a.playing) or 0
         local bPlaying = tonumber(b.playing) or 0
-        local aHigher = aPlaying >= target
-        local bHigher = bPlaying >= target
-        if target > 0 then
-            if aHigher ~= bHigher then
-                return aHigher and not bHigher
-            end
-            local aDiff = aHigher and (aPlaying - target) or (target - aPlaying)
-            local bDiff = bHigher and (bPlaying - target) or (target - bPlaying)
-            if aDiff ~= bDiff then
-                return aDiff < bDiff
-            end
-        else
-            local aDiff = math.abs(aPlaying - target)
-            local bDiff = math.abs(bPlaying - target)
-            if aDiff ~= bDiff then
-                return aDiff < bDiff
-            end
+        local aPreferred = prefersServer(aPlaying, prefRange)
+        local bPreferred = prefersServer(bPlaying, prefRange)
+        if aPreferred ~= bPreferred then
+            return aPreferred
+        end
+        local aDist = preferredDistance(aPlaying, prefRange)
+        local bDist = preferredDistance(bPlaying, prefRange)
+        if aDist ~= bDist then
+            return aDist < bDist
         end
         if aPlaying ~= bPlaying then
             return aPlaying > bPlaying
@@ -1468,18 +1489,17 @@ function serverHopNow(immediate)
                         local other = {}
                         local highPop = {}
                         local minPlayers = shouldUseAntiNonBusyServers() and SERVER_HOP_MIN_PLAYERS or 0
-                        local prefTarget = tonumber(SETTINGS.serverPreferredPlayers) or 0
+                        local prefRange = parsePreferredPlayerTarget(SETTINGS.serverPreferredPlayers)
                         for _, v in ipairs(body.data) do
                             if type(v) == "table" and v.id then
                                 local playing = tonumber(v.playing) or 0
                                 local maxP = tonumber(v.maxPlayers) or 0
                                 local notFull = (maxP > 0) and (playing < maxP) or true
-                                local meetsBusy = minPlayers <= 0 or playing >= minPlayers
-                                if prefTarget > 0 and notFull then
+                                if prefRange.max > 0 and notFull then
                                     table.insert(preferred, { id = v.id, playing = playing, maxPlayers = maxP })
-                                elseif minPlayers > 0 and playing >= minPlayers then
+                                elseif minPlayers > 0 and playing >= minPlayers and notFull then
                                     table.insert(busy, v.id)
-                                elseif prefTarget <= 0 and playing and playing >= 14 and playing < maxP then
+                                elseif playing and maxP and playing >= SERVER_HOP_MIN_PLAYERS and playing < maxP then
                                     table.insert(highPop, v.id)
                                 elseif playing and maxP and playing < maxP then
                                     table.insert(available, v.id)
@@ -1492,8 +1512,8 @@ function serverHopNow(immediate)
                             end
                         end
 
-                        if prefTarget > 0 and #preferred > 0 then
-                            preferred = sortCandidatesByPreferred(preferred, prefTarget)
+                        if prefRange.max > 0 and #preferred > 0 then
+                            preferred = sortCandidatesByPreferred(preferred, prefRange)
                             local maxCount = math.max(1, math.floor(tonumber(SETTINGS.serverHopRange) or 6))
                             for i = 1, math.min(#preferred, maxCount) do
                                 table.insert(servers, preferred[i].id)
@@ -1509,21 +1529,24 @@ function serverHopNow(immediate)
                             if #servers == 0 then
                                 servers = other
                             end
-                        elseif #preferred > 0 then
-                            servers = preferred
                         elseif #available > 0 then
                             servers = available
                         else
                             servers = other
                         end
 
-                        if prefTarget > 0 and #servers == 0 then
-                            servers = pickRandomCandidates(available, math.max(1, math.floor(tonumber(SETTINGS.serverHopRange) or 6)))
-                        elseif prefTarget > 0 then
-                            local maxCount = math.max(1, math.floor(tonumber(SETTINGS.serverHopRange) or 6))
-                            servers = pickRandomCandidates(servers, maxCount)
-                        else
-                            local maxCount = math.max(1, math.floor(tonumber(SETTINGS.serverHopRange) or 6))
+                        local maxCount = math.max(1, math.floor(tonumber(SETTINGS.serverHopRange) or 6))
+                        if prefRange.max > 0 and #servers == 0 then
+                            if #highPop > 0 then
+                                servers = highPop
+                            elseif #available > 0 then
+                                servers = available
+                            elseif #other > 0 then
+                                servers = other
+                            end
+                        end
+
+                        if #servers > 0 then
                             servers = pickRandomCandidates(servers, maxCount)
                         end
 
@@ -1539,9 +1562,6 @@ function serverHopNow(immediate)
             else
                 updateServerMonitor(availableServerCount, Players.NumPlayers)
                 local instanceId = servers[math.random(1, #servers)]
-                pcall(function()
-                    notifyServerHopExecution(immediate and "anti-busy" or "manual", placeId, instanceId)
-                end)
                 local ok, err = tryTeleportToServer(placeId, instanceId)
                 if ok then
                     showNotification("Teleporting to another server")
