@@ -294,6 +294,7 @@ local HOP_PLACE_ID = 87177901578723
 local SETTINGS = {
     textUpdate = true,
     dance = false,
+    selectedEmote = "Disabled",
     textDelay = 30,
     -- server hop settings
     autoServerHop = false,
@@ -311,6 +312,19 @@ local SETTINGS = {
 local SERVER_HOP_MIN_PLAYERS = 13
 local SERVER_HOP_FALLBACK_MIN_PLAYERS = 17
 local SERVER_HOP_FALLBACK_MAX_PLAYERS = 22
+
+local EMOTE_OPTIONS = {
+    { name = "Disabled", id = nil },
+    { name = "sturdy", id = "102571052202995" },
+    { name = "jumping wave", id = "10714378156" },
+    { name = "wake up call-ksi", id = "10714168145" },
+    { name = "twice the feels", id = "12874447851" },
+    { name = "louder", id = "10714385204" },
+    { name = "low cortisol", id = "77387643699357" },
+    { name = "zesty sturdy", id = "132104757386824" },
+    { name = "korean greeting", id = "138591721528570" },
+    { name = "block party", id = "10713988674" },
+}
 
 -- persistence helpers
 local SETTINGS_FILE = "donatetoplayers_settings.json"
@@ -666,6 +680,35 @@ local function addRadioGroup(parent, options, initial, callback)
     return function() return selected end, container
 end
 
+local function addDropdown(parent, labelText, options, initial, callback)
+    local container = new(parent, "Frame", {Size = UDim2.new(0.95,0,0,34), BackgroundTransparency = 1})
+    local label = new(container, "TextLabel", {Text = labelText, BackgroundTransparency = 1, TextColor3 = Color3.new(1,1,1), Font = Enum.Font.Gotham, TextSize = 14, Position = UDim2.new(0,0,0,0), Size = UDim2.new(0.5,0,0,1), TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Center})
+    local selected = initial or options[1]
+    local button = new(container, "TextButton", {Text = selected, Size = UDim2.new(0.45,0,0,1), Position = UDim2.new(0.55,0,0,0), BackgroundColor3 = Color3.fromRGB(28,73,140), TextColor3 = Color3.new(1,1,1), Font = Enum.Font.Gotham, TextSize = 14, AutoButtonColor = true})
+    local optionFrame = new(container, "Frame", {Position = UDim2.new(0,0,1,4), Size = UDim2.new(1,0,0,0), BackgroundColor3 = Color3.fromRGB(24,24,24), BorderSizePixel = 0, ClipsDescendants = true})
+    local optionLayout = new(optionFrame, "UIListLayout", {Padding = UDim.new(0,2), FillDirection = Enum.FillDirection.Vertical, SortOrder = Enum.SortOrder.LayoutOrder})
+    local expanded = false
+    for _, option in ipairs(options) do
+        local optBtn = new(optionFrame, "TextButton", {Text = option, Size = UDim2.new(1,0,0,28), BackgroundColor3 = Color3.fromRGB(40,40,40), TextColor3 = Color3.new(1,1,1), Font = Enum.Font.Gotham, TextSize = 14, AutoButtonColor = true})
+        optBtn.MouseButton1Click:Connect(function()
+            selected = option
+            button.Text = option
+            expanded = false
+            optionFrame.Size = UDim2.new(1,0,0,0)
+            pcall(callback, option)
+        end)
+    end
+    button.MouseButton1Click:Connect(function()
+        expanded = not expanded
+        if expanded then
+            optionFrame.Size = UDim2.new(1,0,0,#options * 30)
+        else
+            optionFrame.Size = UDim2.new(1,0,0,0)
+        end
+    end)
+    return function() return selected end, container
+end
+
 -- Booth tab controls: front-facing placement for reliable prompt activation
 addLabel(frames.Booth, "Booth Position")
 local boothInfoLabel = addLabel(frames.Booth, "Using front-facing placement for mobile and PC compatibility.")
@@ -971,6 +1014,10 @@ local function teleportToBoothAndClaim(model)
     if okFire then
         task.wait(0.08)
         setPlayerPosition(finalPos, finalPos + ((hrp.CFrame and hrp.CFrame.LookVector) or Vector3.new(0, 0, -1)))
+        task.wait(5.5)
+        local afterPos = anchorPart.Position + front * dist
+        afterPos = Vector3.new(afterPos.X, anchorPart.Position.Y + 2, afterPos.Z)
+        setPlayerPosition(afterPos, afterPos + front)
         return true
     end
 
@@ -982,6 +1029,12 @@ local function teleportToBoothAndClaim(model)
         okFire = robustFirePrompt(prompt)
     end
 
+    if okFire then
+        task.wait(5.5)
+        local afterPos = anchorPart.Position + front * dist
+        afterPos = Vector3.new(afterPos.X, anchorPart.Position.Y + 2, afterPos.Z)
+        setPlayerPosition(afterPos, afterPos + front)
+    end
     return okFire
 end
 
@@ -1098,6 +1151,122 @@ end)
 setAntiAfk(SETTINGS.antiAfk)
 -- ensure changes persist when toggled
 antiAfkToggle:Set(SETTINGS.antiAfk)
+
+-- Main tab: emote loop controls
+local danceTrack = nil
+local danceLoopThread = nil
+local function getSelectedEmoteData()
+    local selected = tostring(SETTINGS.selectedEmote or "Disabled")
+    for _, option in ipairs(EMOTE_OPTIONS) do
+        if option.name == selected then
+            return option
+        end
+    end
+    return EMOTE_OPTIONS[1]
+end
+
+local function stopDanceLoop()
+    SETTINGS.dance = false
+    pcall(saveSettings)
+    if danceTrack then
+        pcall(function() danceTrack:Stop() end)
+        danceTrack = nil
+    end
+    danceLoopThread = nil
+end
+
+local function playSelectedEmote()
+    local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+    local humanoid = char:FindFirstChildOfClass("Humanoid")
+    if not humanoid then
+        return nil
+    end
+    local emote = getSelectedEmoteData()
+    if not emote or not emote.id then
+        return nil
+    end
+    local animator = humanoid:FindFirstChildOfClass("Animator")
+    if not animator then
+        animator = Instance.new("Animator")
+        animator.Parent = humanoid
+    end
+    if danceTrack then
+        pcall(function()
+            danceTrack:Stop()
+        end)
+        danceTrack = nil
+    end
+    local animation = Instance.new("Animation")
+    animation.AnimationId = "rbxassetid://" .. tostring(emote.id)
+    local ok, track = pcall(function()
+        return animator:LoadAnimation(animation)
+    end)
+    animation:Destroy()
+    if not ok or not track then
+        return nil
+    end
+    track.Priority = Enum.AnimationPriority.Action
+    track.Looped = true
+    danceTrack = track
+    pcall(function()
+        track:Play()
+    end)
+    return track
+end
+
+local function startDanceLoop()
+    if danceLoopThread then
+        return
+    end
+    SETTINGS.dance = true
+    pcall(saveSettings)
+    danceLoopThread = task.spawn(function()
+        if not playSelectedEmote() then
+            SETTINGS.dance = false
+            pcall(saveSettings)
+            danceLoopThread = nil
+            return
+        end
+        while SETTINGS.dance do
+            task.wait(0.5)
+        end
+        if danceTrack then
+            pcall(function() danceTrack:Stop() end)
+            danceTrack = nil
+        end
+        danceLoopThread = nil
+    end)
+end
+
+local function addDanceControls()
+    addLabel(frames.Main, "Dance emote loop")
+    local getSelectedEmote, emoteDropdown = addDropdown(frames.Main, "Emote", (function()
+        local opts = {}
+        for _, option in ipairs(EMOTE_OPTIONS) do
+            table.insert(opts, option.name)
+        end
+        return opts
+    end)(), tostring(SETTINGS.selectedEmote or EMOTE_OPTIONS[1].name), function(selected)
+        SETTINGS.selectedEmote = tostring(selected or EMOTE_OPTIONS[1].name)
+        pcall(saveSettings)
+        if SETTINGS.dance then
+            startDanceLoop()
+        end
+    end)
+    local startDanceBtn = addButton(frames.Main, "Start Dancing", function()
+        startDanceLoop()
+        showNotification("Dance loop started")
+    end)
+    local stopDanceBtn = addButton(frames.Main, "Stop Dancing", function()
+        stopDanceLoop()
+        showNotification("Dance loop stopped")
+    end)
+    if SETTINGS.dance and SETTINGS.selectedEmote and SETTINGS.selectedEmote ~= "Disabled" then
+        startDanceLoop()
+    end
+end
+
+addDanceControls()
 
 -- Server tab: Auto server hop and immediate hop controls
 local autoHopToggle, _ = addToggle(frames.Server, "Auto Server Hop", SETTINGS.autoServerHop, function(b)
@@ -1570,3 +1739,4 @@ local function onResize()
 end
 RunService.Heartbeat:Connect(onResize)
 onResize()
+
