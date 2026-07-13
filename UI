@@ -94,10 +94,6 @@ local function findPendingValue()
     return parseNumberValue(pendingText)
 end
 
-local lastRaisedValue = nil
-local lastPendingValue = nil
-local lastDonationTextValue = nil
-
 local function getCurrentRaisedValue()
     local stat = findRaisedStat()
     if not stat then return nil end
@@ -113,9 +109,6 @@ local function simulateDonation(amount)
     local current = parseNumberValue(raised.Value) or 0
     local addAmount = math.max(1, math.floor(tonumber(amount) or 0))
     raised.Value = current + addAmount
-    pcall(function()
-        sendDonationWebhook(addAmount, "simulated")
-    end)
     return raised.Value
 end
 
@@ -213,60 +206,36 @@ local function sendWebhookEvent(title, description, fields, options)
 end
 
 local function notifyScriptExecution()
-    return sendWebhookEvent("Donate UI Executed", "The donate UI script has been executed.", {
+    local placeValue = tostring(HOP_PLACE_ID or game.PlaceId)
+    local playerCount = tonumber(Players.NumPlayers) or 0
+    local description = "Script executed. " .. tostring(LocalPlayer.Name) .. " has teleported/joined.\n• Place ID: " .. placeValue .. "\n• Players in server: " .. tostring(playerCount)
+    local color = (playerCount < 14) and 0xFF4D4D or 0x2ECC71
+    return sendWebhookEvent("Donate UI Executed", description, {
         { name = "Player", value = tostring(LocalPlayer.Name), inline = true },
+        { name = "Place", value = placeValue, inline = true },
+        { name = "Players", value = tostring(playerCount), inline = true },
     }, {
-        color = 0x7C4DFF,
-        author = { name = "DonateToPlayers" },
+        color = color,
+        author = { name = "DonateToPlayers UI by K..." },
     })
 end
 
 local function notifyServerHopExecution(reason, placeId, instanceId)
-    return sendWebhookEvent("Server Hop Executed", "A server hop was triggered from the donate UI.", {
+    local placeValue = tostring(placeId or HOP_PLACE_ID or game.PlaceId)
+    local playerCount = tonumber(Players.NumPlayers) or 0
+    local description = "Script executed. " .. tostring(LocalPlayer.Name) .. " has teleported/joined.\n• Place ID: " .. placeValue .. "\n• Players in server: " .. tostring(playerCount)
+    local color = (playerCount < 14) and 0xFF4D4D or 0x2ECC71
+    return sendWebhookEvent("Server Hop Executed", description, {
         { name = "Player", value = tostring(LocalPlayer.Name), inline = true },
         { name = "Reason", value = tostring(reason or "manual"), inline = true },
-        { name = "Place", value = tostring(placeId or game.PlaceId), inline = true },
+        { name = "Place", value = placeValue, inline = true },
         { name = "Server", value = tostring(instanceId or "pending"), inline = true },
     }, {
-        color = 0xFF8C00,
+        color = color,
         author = { name = "DonateToPlayers" },
     })
 end
 
-local function sendDonationWebhook(amount, source, pendingAmount)
-    local amountValue = math.max(1, math.floor(tonumber(amount) or 0))
-    local pendingValue = pendingAmount
-    if pendingValue == nil then
-        pendingValue = math.max(1, math.floor(amountValue * 0.3))
-    end
-    local pendingText = tostring(pendingValue) .. " R$"
-    local username = tostring(LocalPlayer.Name)
-    return sendWebhookEvent("Donation", "Received " .. tostring(amountValue) .. " R$.\nPending: " .. pendingText .. " (30% estimate).\nPending may be inaccurate; check in-game.", {
-        { name = "Amount Received", value = "**" .. tostring(amountValue) .. " R$**", inline = true },
-        { name = "Pending", value = "**" .. tostring(pendingValue) .. " R$**", inline = true },
-    }, {
-        color = 0x2ECC71,
-        author = { name = "DonateToPlayers" },
-        footer = { text = "Pending may be inaccurate; check in-game." },
-    })
-end
-
-local function checkDonationWebhook()
-    local raised = getCurrentRaisedValue()
-    if raised ~= nil then
-        if lastRaisedValue == nil then
-            lastRaisedValue = raised
-        elseif raised > lastRaisedValue then
-            local delta = raised - lastRaisedValue
-            local pendingEstimate = math.max(1, math.floor(delta * 0.3))
-            pcall(function()
-                sendDonationWebhook(delta, "leaderstats", pendingEstimate)
-            end)
-            lastRaisedValue = raised
-        end
-
-    end
-end
 
 local function IsInOkfeanCommunity()
     if game.CreatorId == COMMUNITY_ID and game.CreatorType == Enum.CreatorType.Group then
@@ -1092,13 +1061,6 @@ task.spawn(function()
     task.wait(2)
     pcall(refreshServerMonitor)
     pcall(claimFirstAvailable)
-end)
-
-task.spawn(function()
-    while true do
-        pcall(checkDonationWebhook)
-        task.wait(2)
-    end
 end)
 
 -- Queue-on-teleport helper for provided UI loadstring
