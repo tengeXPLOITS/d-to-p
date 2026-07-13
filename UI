@@ -715,10 +715,12 @@ boothTextLineBreakBtn.TextSize = 13
 
 local boothTextSaveBtn = addButton(frames.Booth, "Save Text", function()
     local payload = boothTextBox.Text or ""
-    SETTINGS.boothText = payload
+    local template = tostring(payload or "")
+    SETTINGS.boothText = template
+    SETTINGS.boothTextTemplate = template
     pcall(saveSettings)
     pcall(function()
-        fireBoothTextEvent(payload)
+        fireBoothTextEvent(template)
     end)
     showNotification("Booth text saved")
 end)
@@ -728,13 +730,33 @@ boothTextSaveBtn.TextSize = 13
 addLabel(frames.Booth, "Goal uses numbers only (example: 1000)")
 
 local boothTextSyncing = false
+local function getBoothTemplateText()
+    local template = SETTINGS.boothTextTemplate or SETTINGS.boothText
+    if template == nil then
+        template = "$C / $G"
+    end
+    return tostring(template)
+end
+
+local function setBoothTemplateText(text)
+    local template = tostring(text or "")
+    SETTINGS.boothText = template
+    SETTINGS.boothTextTemplate = template
+    pcall(saveSettings)
+    return template
+end
+
 local function fireBoothTextEvent(text)
     local template = tostring(text or boothTextBox.Text or "")
     local raised = getCurrentRaisedValue() or 0
     local goal = math.max(1, math.floor(tonumber(SETTINGS.donationGoal) or 1000))
     local payload = formatDonationProgressText(raised, goal, template)
-    SETTINGS.boothText = template
-    pcall(saveSettings)
+    setBoothTemplateText(template)
+    if boothTextBox then
+        boothTextSyncing = true
+        boothTextBox.Text = template
+        boothTextSyncing = false
+    end
     local ok, event = pcall(function()
         local eventsFolder = game:GetService("ReplicatedStorage"):FindFirstChild("Events")
         if eventsFolder then
@@ -778,7 +800,7 @@ local function updateDonationProgressText()
         pcall(saveSettings)
     end
 
-    local template = tostring(SETTINGS.boothText or "$C / $G")
+    local template = getBoothTemplateText()
     local displayText = formatDonationProgressText(raised, goal, template)
     local resolvedText = displayText
 
@@ -790,10 +812,10 @@ local function updateDonationProgressText()
 
     if lastDonationTextValue ~= resolvedText then
         lastDonationTextValue = resolvedText
-        SETTINGS.boothText = resolvedText
+        SETTINGS.lastResolvedBoothText = resolvedText
         pcall(saveSettings)
         pcall(function()
-            fireBoothTextEvent(resolvedText)
+            fireBoothTextEvent(template)
         end)
     end
 end
