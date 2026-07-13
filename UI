@@ -713,6 +713,21 @@ end)
 boothTextLineBreakBtn.Size = UDim2.new(0.95, 0, 0, 32)
 boothTextLineBreakBtn.TextSize = 13
 
+local boothTextSaveBtn = addButton(frames.Booth, "Save Text", function()
+    local payload = boothTextBox.Text or ""
+    local raised = getCurrentRaisedValue() or 0
+    local goal = math.max(1, math.floor(tonumber(SETTINGS.donationGoal) or 1000))
+    local resolved = formatDonationProgressText(raised, goal, payload)
+    SETTINGS.boothText = resolved
+    pcall(saveSettings)
+    pcall(function()
+        fireBoothTextEvent(resolved)
+    end)
+    showNotification("Booth text saved")
+end)
+boothTextSaveBtn.Size = UDim2.new(0.95, 0, 0, 32)
+boothTextSaveBtn.TextSize = 13
+
 addLabel(frames.Booth, "Goal uses numbers only (example: 1000)")
 
 local boothTextSyncing = false
