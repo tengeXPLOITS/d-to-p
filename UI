@@ -45,6 +45,14 @@ local function ensureRaisedStat()
 end
 
 local function findRaisedStat()
+    local leaderstats = LocalPlayer:FindFirstChild("leaderstats")
+    if leaderstats then
+        local raised = leaderstats:FindFirstChild("Raised") or leaderstats:FindFirstChild("raised")
+        if raised and (raised:IsA("IntValue") or raised:IsA("NumberValue") or raised:IsA("StringValue")) then
+            return raised
+        end
+    end
+
     local function findStat(root)
         for _, child in ipairs(root:GetChildren()) do
             if (child.Name:lower() == "raised") and (child:IsA("IntValue") or child:IsA("NumberValue") or child:IsA("StringValue")) then
@@ -56,11 +64,6 @@ local function findRaisedStat()
             if found then return found end
         end
         return nil
-    end
-    local leaderstats = LocalPlayer:FindFirstChild("leaderstats")
-    if leaderstats then
-        local raised = leaderstats:FindFirstChild("Raised") or leaderstats:FindFirstChild("raised")
-        if raised then return raised end
     end
     return findStat(LocalPlayer)
 end
@@ -93,6 +96,7 @@ end
 
 local lastRaisedValue = nil
 local lastPendingValue = nil
+local lastDonationTextValue = nil
 
 local function getCurrentRaisedValue()
     local stat = findRaisedStat()
@@ -222,43 +226,36 @@ local function sendDonationWebhook(amount, source, pendingAmount)
     local amountValue = math.max(1, math.floor(tonumber(amount) or 0))
     local pendingValue = pendingAmount
     if pendingValue == nil then
-        pendingValue = getCurrentPendingValue()
+        pendingValue = math.max(1, math.floor(amountValue * 0.3))
     end
-    local pendingText = pendingValue ~= nil and tostring(pendingValue) or "N/A"
+    local pendingText = tostring(pendingValue) .. " R$"
     local username = tostring(LocalPlayer.Name)
-    return sendWebhookEvent("💸 Donation Received", "**" .. username .. "** got donated :money_with_wings:", {
-        { name = "Robux Received", value = "**" .. tostring(amountValue) .. " R$**", inline = true },
-        { name = "Pending", value = "**" .. pendingText .. " R$**", inline = true },
+    return sendWebhookEvent("Donation", "Received " .. tostring(amountValue) .. " R$.\nPending: " .. pendingText .. " (30% estimate).\nPending may be inaccurate; check in-game.", {
+        { name = "Amount Received", value = "**" .. tostring(amountValue) .. " R$**", inline = true },
+        { name = "Pending", value = "**" .. tostring(pendingValue) .. " R$**", inline = true },
     }, {
-        color = 0x00C853,
+        color = 0x2ECC71,
         author = { name = "DonateToPlayers" },
-        footer = { text = "Pending R$ may not be accurate, so check in-game pls!" },
+        footer = { text = "Pending may be inaccurate; check in-game." },
     })
 end
 
 local function checkDonationWebhook()
     local raised = getCurrentRaisedValue()
-    local pending = getCurrentPendingValue()
-
     if raised ~= nil then
         if lastRaisedValue == nil then
             lastRaisedValue = raised
         elseif raised > lastRaisedValue then
+            local delta = raised - lastRaisedValue
+            local pendingEstimate = math.max(1, math.floor(delta * 0.3))
             pcall(function()
-                sendDonationWebhook(raised - lastRaisedValue, "leaderstats", pending)
+                sendDonationWebhook(delta, "leaderstats", pendingEstimate)
             end)
             lastRaisedValue = raised
         end
-    end
 
-    if pending ~= nil then
-        if lastPendingValue == nil then
-            lastPendingValue = pending
-        elseif pending > lastPendingValue then
-            pcall(function()
-                sendDonationWebhook(pending - lastPendingValue, "pending", pending)
-            end)
-            lastPendingValue = pending
+        if SETTINGS.donationTextUpdateEnabled ~= false then
+            pcall(updateDonationProgressText)
         end
     end
 end
@@ -319,11 +316,15 @@ local SETTINGS = {
     serverPreferredPlayers = 0, -- 0 = disabled; exact player count to target
     boothPosition = "Front",
     webhookUrl = "",
+    boothText = "Any donation brightens my day! ❤️",
+    donationTextUpdateEnabled = true,
+    donationGoal = 1000,
+    donationGoalIncrease = 500,
     -- main
     antiAfk = false,
 }
 
-local SERVER_HOP_MIN_PLAYERS = 13
+local SERVER_HOP_MIN_PLAYERS = 14
 
 -- persistence helpers
 local SETTINGS_FILE = "donatetoplayers_settings.json"
@@ -679,6 +680,133 @@ local boothInfoLabel = addLabel(frames.Booth, "Using front-facing placement for 
 boothInfoLabel.Size = UDim2.new(0.95,0,0,36)
 boothInfoLabel.TextWrapped = true
 boothInfoLabel.TextYAlignment = Enum.TextYAlignment.Top
+
+addLabel(frames.Booth, "Booth Text Editor")
+local boothTextBox = new(frames.Booth, "TextBox", {
+    Text = tostring(SETTINGS.boothText or "Any donation brightens my day! ❤️"),
+    PlaceholderText = "Type booth text here...",
+    Size = UDim2.new(0.95, 0, 0, 140),
+    BackgroundColor3 = Color3.fromRGB(36, 36, 36),
+    TextColor3 = Color3.fromRGB(220, 220, 220),
+    TextSize = 14,
+    Font = Enum.Font.Gotham,
+    MultiLine = true,
+    TextWrapped = true,
+    ClearTextOnFocus = false,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    TextYAlignment = Enum.TextYAlignment.Top,
+    TextEditable = true,
+})
+pcall(function() new(boothTextBox, "UICorner", {CornerRadius = UDim.new(0, 8)}) end)
+pcall(function() new(boothTextBox, "UIStroke", {Color = Color3.fromRGB(80, 80, 80), Thickness = 1, Transparency = 0.35}) end)
+
+local boothTextSyncing = false
+local function fireBoothTextEvent(text)
+    local payload = tostring(text or boothTextBox.Text or "")
+    SETTINGS.boothText = payload
+    pcall(saveSettings)
+    local ok, event = pcall(function()
+        local eventsFolder = game:GetService("ReplicatedStorage"):FindFirstChild("Events")
+        if eventsFolder then
+            return eventsFolder:FindFirstChild("SetBoothText")
+        end
+        return nil
+    end)
+    if ok and event and event:IsA("RemoteEvent") then
+        pcall(function()
+            event:FireServer(payload)
+        end)
+    end
+end
+
+local function updateDonationProgressText()
+    if SETTINGS.donationTextUpdateEnabled == false then
+        return
+    end
+
+    local raised = getCurrentRaisedValue()
+    if raised == nil then
+        return
+    end
+
+    local goal = math.max(1, math.floor(tonumber(SETTINGS.donationGoal) or 1000))
+    local increaseBy = math.max(1, math.floor(tonumber(SETTINGS.donationGoalIncrease) or 500))
+
+    if raised >= goal then
+        goal = goal + increaseBy
+        SETTINGS.donationGoal = goal
+        pcall(saveSettings)
+    end
+
+    local displayText = tostring(math.floor(raised)) .. " / " .. tostring(goal)
+    if boothTextBox and boothTextBox.Text ~= displayText then
+        boothTextSyncing = true
+        boothTextBox.Text = displayText
+        boothTextSyncing = false
+    end
+
+    if lastDonationTextValue ~= displayText then
+        lastDonationTextValue = displayText
+        SETTINGS.boothText = displayText
+        pcall(saveSettings)
+        pcall(function()
+            fireBoothTextEvent(displayText)
+        end)
+    end
+end
+
+addLabel(frames.Booth, "Donation Goal")
+local donationGoalBox = addTextBox(frames.Booth, tostring(SETTINGS.donationGoal or 1000), function(v)
+    local n = tonumber(v)
+    if n then
+        n = math.max(1, math.floor(n))
+        SETTINGS.donationGoal = n
+        pcall(saveSettings)
+        pcall(updateDonationProgressText)
+    end
+end)
+donationGoalBox.Text = tostring(SETTINGS.donationGoal or 1000)
+
+addLabel(frames.Booth, "Goal Increase Amount")
+local donationIncreaseBox = addTextBox(frames.Booth, tostring(SETTINGS.donationGoalIncrease or 500), function(v)
+    local n = tonumber(v)
+    if n then
+        n = math.max(1, math.floor(n))
+        SETTINGS.donationGoalIncrease = n
+        pcall(saveSettings)
+        pcall(updateDonationProgressText)
+    end
+end)
+donationIncreaseBox.Text = tostring(SETTINGS.donationGoalIncrease or 500)
+
+local donationTextToggle, _ = addToggle(frames.Booth, "Auto update booth text on donation", SETTINGS.donationTextUpdateEnabled ~= false, function(b)
+    SETTINGS.donationTextUpdateEnabled = b and true or false
+    pcall(saveSettings)
+    if SETTINGS.donationTextUpdateEnabled ~= false then
+        pcall(updateDonationProgressText)
+    end
+end)
+
+donationTextToggle:Set(SETTINGS.donationTextUpdateEnabled ~= false)
+
+local boothTextEditCooldown = false
+boothTextBox:GetPropertyChangedSignal("Text"):Connect(function()
+    if boothTextSyncing or boothTextEditCooldown then
+        return
+    end
+    boothTextEditCooldown = true
+    task.delay(0.25, function()
+        boothTextEditCooldown = false
+    end)
+    pcall(function()
+        fireBoothTextEvent(boothTextBox.Text)
+    end)
+end)
+boothTextBox.FocusLost:Connect(function()
+    pcall(function()
+        fireBoothTextEvent(boothTextBox.Text)
+    end)
+end)
 
 -- Claiming logic per user's spec
 local function findAvailableBooth()
@@ -1296,7 +1424,8 @@ local function getHopPlaceId()
 end
 
 local function shouldUseAntiNonBusyServers()
-    return SETTINGS.antiNonBusyServers and (Players.NumPlayers or 0) < SERVER_HOP_MIN_PLAYERS
+    local currentPlayers = tonumber(Players.NumPlayers) or 0
+    return SETTINGS.antiNonBusyServers and currentPlayers < SERVER_HOP_MIN_PLAYERS
 end
 
 local function fetchServerList(placeId)
@@ -1366,6 +1495,7 @@ function serverHopNow(immediate)
                         local busy = {}
                         local available = {}
                         local other = {}
+                        local highPop = {}
                         local minPlayers = shouldUseAntiNonBusyServers() and SERVER_HOP_MIN_PLAYERS or 0
                         local prefTarget = tonumber(SETTINGS.serverPreferredPlayers) or 0
                         for _, v in ipairs(body.data) do
@@ -1378,8 +1508,8 @@ function serverHopNow(immediate)
                                     table.insert(preferred, v.id)
                                 elseif minPlayers > 0 and playing >= minPlayers then
                                     table.insert(busy, v.id)
-                                elseif prefTarget <= 0 and playing and playing >= 21 and playing <= 22 then
-                                    table.insert(preferred, v.id)
+                                elseif prefTarget <= 0 and playing and playing >= 14 and playing < maxP then
+                                    table.insert(highPop, v.id)
                                 elseif playing and maxP and playing < maxP then
                                     table.insert(available, v.id)
                                 elseif notFull then
@@ -1392,6 +1522,15 @@ function serverHopNow(immediate)
                             servers = preferred
                         elseif minPlayers > 0 then
                             servers = busy
+                            if #servers == 0 then
+                                servers = highPop
+                            end
+                            if #servers == 0 then
+                                servers = available
+                            end
+                            if #servers == 0 then
+                                servers = other
+                            end
                         elseif #preferred > 0 then
                             servers = preferred
                         elseif #available > 0 then
@@ -1438,6 +1577,29 @@ end
 
 -- Auto-hop loop (checks SETTINGS.autoServerHop)
 local autoHopVersion = 0
+local antiBusyHopLastAttempt = 0
+
+local function enforceSuitableServerIfNeeded()
+    if not SETTINGS.antiNonBusyServers then
+        return
+    end
+
+    local currentPlayers = tonumber(Players.NumPlayers) or 0
+    if currentPlayers >= SERVER_HOP_MIN_PLAYERS then
+        return
+    end
+
+    local now = os.clock()
+    if now - antiBusyHopLastAttempt < 20 then
+        return
+    end
+
+    antiBusyHopLastAttempt = now
+    pcall(function()
+        showNotification("Anti-busy server check: hopping to a fuller server")
+        serverHopNow(true)
+    end)
+end
 
 task.spawn(function()
     while true do
@@ -1462,6 +1624,9 @@ task.spawn(function()
         else
             task.wait(1)
         end
+
+        pcall(enforceSuitableServerIfNeeded)
+        task.wait(10)
     end
 end)
 
@@ -1502,4 +1667,4 @@ end
 RunService.Heartbeat:Connect(onResize)
 onResize()
 
-print("@youdontknow me on all social media platforms")
+print("HAaland 4 the win!!!!")
