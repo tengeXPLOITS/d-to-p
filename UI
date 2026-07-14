@@ -462,6 +462,23 @@ local function showNotification(text)
 end
 showNotification("✅ Okfean Community verified — Donate UI loaded")
 
+local function cleanupWorkspaceBancas()
+    local removed = 0
+    local descendants = workspace:GetDescendants()
+    for _, instance in ipairs(descendants) do
+        if instance:IsA("Model") and string.lower(instance.Name or "") == "bancas" then
+            pcall(function()
+                instance:Destroy()
+                removed = removed + 1
+            end)
+        end
+    end
+    if removed > 0 then
+        showNotification("Removed " .. tostring(removed) .. " workspace Banca model(s)")
+    end
+end
+cleanupWorkspaceBancas()
+
 task.spawn(function()
     task.wait(1)
     pcall(function()
@@ -820,13 +837,37 @@ local function findAvailableBooth()
     if not stands then return nil end
     for _, model in ipairs(stands:GetChildren()) do
         if model:IsA("Model") and model.Name == "Basic Booth" then
-            local usernameVal = model:FindFirstChild("Username")
-            if usernameVal and (usernameVal.Value == nil or usernameVal.Value == "") then
+            local usernameVal = model:FindFirstChild("Username") or model:FindFirstChild("username")
+            if usernameVal and usernameVal:IsA("StringValue") and (usernameVal.Value == nil or usernameVal.Value == "") then
                 return model
             end
         end
     end
     return nil
+end
+
+local function secureBoothOwnership(model)
+    if not model then
+        return false, "missing booth"
+    end
+
+    local usernameVal = model:FindFirstChild("Username") or model:FindFirstChild("username")
+    if not usernameVal or not usernameVal:IsA("StringValue") then
+        showNotification("Booth ownership check failed: missing Username StringValue")
+        return false, "missing username value"
+    end
+
+    local expectedName = tostring(LocalPlayer.Name)
+    local existingName = tostring(usernameVal.Value or "")
+    if existingName == "" then
+        usernameVal.Value = expectedName
+        existingName = expectedName
+    end
+
+    local matches = string.lower(existingName) == string.lower(expectedName)
+    local statusText = matches and ("Booth ownership confirmed: " .. existingName) or ("Booth ownership mismatch: expected " .. expectedName .. ", found " .. existingName)
+    showNotification(statusText)
+    return matches, existingName
 end
 
 local function teleportToBoothAndClaim(model)
@@ -974,17 +1015,11 @@ local function teleportToBoothAndClaim(model)
     local boothDistance = boothHalfDepth + 2.5
     local function getAfterClaimPosition()
         local yPos = anchorPart.Position.Y + 2
-        local frontFace = boothOrigin + boothFront * boothHalfDepth
-        local offsetDistance = 1.75
         if promptPosition then
-            local promptDelta = Vector3.new(promptPosition.X - boothOrigin.X, 0, promptPosition.Z - boothOrigin.Z)
-            local lateralAxis = Vector3.new(-boothFront.Z, 0, boothFront.X)
-            local lateralOffset = lateralAxis:Dot(promptDelta)
-            local sidePos = frontFace + lateralAxis * lateralOffset
-            local finalPos = sidePos + boothFront * offsetDistance
+            local finalPos = promptPosition + boothFront * 2.15
             return Vector3.new(finalPos.X, yPos, finalPos.Z)
         end
-        local fallbackPos = boothOrigin + boothFront * (boothHalfDepth + offsetDistance)
+        local fallbackPos = boothOrigin + boothFront * (boothHalfDepth + 2.15)
         return Vector3.new(fallbackPos.X, yPos, fallbackPos.Z)
     end
 
@@ -1089,7 +1124,8 @@ local function teleportToBoothAndClaim(model)
         setPlayerPosition(afterPos, afterPos + boothFront)
         task.wait(0.35)
         setPlayerPosition(afterPos, afterPos + boothFront)
-        return true
+        local ownerOk = secureBoothOwnership(model)
+        return ownerOk
     end
 
     task.wait(0.08)
@@ -1107,23 +1143,32 @@ local function teleportToBoothAndClaim(model)
         setPlayerPosition(afterPos, afterPos + boothFront)
         task.wait(0.35)
         setPlayerPosition(afterPos, afterPos + boothFront)
+        local ownerOk = secureBoothOwnership(model)
+        return ownerOk
     end
-    return okFire
+
+    return false
 end
 
 local function claimFirstAvailable()
-    local b = findAvailableBooth()
-    if not b then
-        warn("No available Basic Booth found")
-        return false
+    for attempt = 1, 5 do
+        local b = findAvailableBooth()
+        if not b then
+            warn("No available Basic Booth found")
+            return false
+        end
+
+        local ok, ownerName = teleportToBoothAndClaim(b)
+        if ok == true then
+            warn("Claim attempt finished")
+            return true
+        end
+
+        showNotification("Booth ownership mismatch, trying another booth")
     end
-    local ok = teleportToBoothAndClaim(b)
-    if ok then
-        warn("Claim attempt finished")
-    else
-        warn("Claim attempt failed")
-    end
-    return ok
+
+    warn("Claim attempt failed")
+    return false
 end
 
 -- Auto-run claim once UI loads (script already claims automatically)
