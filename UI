@@ -660,6 +660,12 @@ local function makeContentFrame(name)
         ScrollBarThickness = 8,
         Visible = false,
     })
+    local pad = new(f, "UIPadding", {
+        PaddingLeft = UDim.new(0, 8),
+        PaddingRight = UDim.new(0, 8),
+        PaddingTop = UDim.new(0, 8),
+        PaddingBottom = UDim.new(0, 8),
+    })
     local layout = new(f, "UIListLayout", {})
     layout.SortOrder = Enum.SortOrder.LayoutOrder
     layout.Padding = UDim.new(0,8)
@@ -1075,15 +1081,12 @@ local function teleportToBoothAndClaim(model)
     end
     local boothFront = getBoothFrontDirection()
     local boothHalfDepth = math.abs(boothFront:Dot(boothCFrame.RightVector)) * boothSize.X/2 + math.abs(boothFront:Dot(boothCFrame.LookVector)) * boothSize.Z/2
-    local boothDistance = boothHalfDepth + 2.5
+    local boothDistance = boothHalfDepth + 3.8
     local function getAfterClaimPosition()
         local yPos = anchorPart.Position.Y + 2
-        if promptPosition then
-            local finalPos = promptPosition + boothFront * 2.15
-            return Vector3.new(finalPos.X, yPos, finalPos.Z)
-        end
-        local fallbackPos = boothOrigin + boothFront * (boothHalfDepth + 2.15)
-        return Vector3.new(fallbackPos.X, yPos, fallbackPos.Z)
+        local distanceFromBooth = math.max(boothHalfDepth + 3.2, 3.6)
+        local finalPos = boothOrigin + boothFront * distanceFromBooth
+        return Vector3.new(finalPos.X, yPos, finalPos.Z)
     end
 
     local function robustFirePrompt(promptObj)
