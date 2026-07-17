@@ -990,6 +990,13 @@ local function teleportToBoothAndClaim(model)
             human.AutoRotate = true
             human.Sit = false
 
+            if lookAt then
+                local lookDirection = (lookAt - targetPos)
+                if lookDirection.Magnitude > 0.01 then
+                    hrp.CFrame = CFrame.new(hrp.Position, targetPos + lookDirection.Unit)
+                end
+            end
+
             local path = PathfindingService:CreatePath({
                 AgentRadius = 3,
                 AgentHeight = 5,
@@ -1001,39 +1008,25 @@ local function teleportToBoothAndClaim(model)
                 return path:ComputeAsync(hrp.Position, targetPos)
             end)
 
-            local function waitForReach(destination)
-                local goalTime = os.clock() + 8
-                while os.clock() < goalTime do
-                    if (hrp.Position - destination).Magnitude < 3 then
-                        return true
-                    end
-                    task.wait(0.05)
-                end
-                return false
-            end
-
             if pathStatus and pathResult and path.Status == Enum.PathStatus.Success then
                 local waypoints = path:GetWaypoints()
-                for _, waypoint in ipairs(waypoints) do
+                for idx, waypoint in ipairs(waypoints) do
                     if waypoint.Action == Enum.PathWaypointAction.Jump then
                         human.Jump = true
                     end
                     human:MoveTo(waypoint.Position)
-                    local reached = waitForReach(waypoint.Position)
-                    if not reached then
-                        break
-                    end
+                    task.wait((idx == #waypoints) and 0.12 or 0.06)
                 end
             else
                 human:MoveTo(targetPos)
-                waitForReach(targetPos)
+                task.wait(0.08)
             end
 
             human.WalkSpeed = oldWalkSpeed
             human.JumpPower = oldJumpPower
             human.AutoRotate = oldAutoRotate
             human.Sit = oldSit
-            return (hrp.Position - targetPos).Magnitude <= 2.2
+            return true
         end
 
         setPlayerPosition(targetPos, lookAt)
@@ -1073,7 +1066,8 @@ local function teleportToBoothAndClaim(model)
     task.wait(0.12)
 
     -- Give the booth and prompt a short moment to settle before claiming from range
-    task.wait(1.25)
+    local settleDelay = (string.lower(tostring(SETTINGS.boothMoveMode or "Teleport")) == "walk") and 0.35 or 1.25
+    task.wait(settleDelay)
 
     local function getClaimPromptCandidates()
         local prompts = {}
@@ -1273,11 +1267,11 @@ local function teleportToBoothAndClaim(model)
         task.wait(0.08)
         local frontDir = getFacingDirection(promptCFrame or anchorPart.CFrame, anchorPart.Position)
         moveCharacterToTarget(finalPos, finalPos + frontDir, 20)
-        task.wait(5.5)
-        local afterPos = getAfterClaimPosition()
-        moveCharacterToTarget(afterPos, afterPos + boothFront, 20)
         task.wait(0.35)
-        moveCharacterToTarget(afterPos, afterPos + boothFront, 20)
+        local afterPos = getAfterClaimPosition()
+        moveCharacterToTarget(afterPos, afterPos - boothFront, 20)
+        task.wait(0.15)
+        setPlayerPosition(afterPos, afterPos - boothFront)
         local ownerOk = secureBoothOwnership(model)
         return ownerOk
     end
@@ -1292,11 +1286,11 @@ local function teleportToBoothAndClaim(model)
     end
 
     if okFire then
-        task.wait(5.5)
-        local afterPos = getAfterClaimPosition()
-        moveCharacterToTarget(afterPos, afterPos + boothFront, 20)
         task.wait(0.35)
-        moveCharacterToTarget(afterPos, afterPos + boothFront, 20)
+        local afterPos = getAfterClaimPosition()
+        moveCharacterToTarget(afterPos, afterPos - boothFront, 20)
+        task.wait(0.15)
+        setPlayerPosition(afterPos, afterPos - boothFront)
         local ownerOk = secureBoothOwnership(model)
         return ownerOk
     end
@@ -1326,6 +1320,13 @@ local function claimFirstAvailable()
 end
 
 -- Auto-run claim once UI loads (script already claims automatically)
+local claimRetryConnection
+claimRetryConnection = LocalPlayer.CharacterAdded:Connect(function()
+    task.delay(1.2, function()
+        pcall(claimFirstAvailable)
+    end)
+end)
+
 task.spawn(function()
     task.wait(1.5)
     pcall(claimFirstAvailable)
