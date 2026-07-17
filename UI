@@ -11,6 +11,7 @@ local httprequest = (syn and syn.request) or (http and http.request) or http_req
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 local TweenService = game:GetService("TweenService")
+local PathfindingService = game:GetService("PathfindingService")
 
 local COMMUNITY_ID = 36062881
 local UI_NAME = "DonateToPlayersUI"
@@ -363,7 +364,7 @@ local SETTINGS = {
     serverStayMinutes = 5,
     serverPreferredPlayers = "0", -- 0 = disabled; exact player count or range to target
     boothPosition = "Front",
-    boothMoveWalkEnabled = false,
+    boothMoveMode = "Teleport",
     webhookUrl = "",
     boothText = "Any donation brightens my day! ❤️",
     -- main
@@ -410,6 +411,12 @@ local function loadSettings()
 end
 
 loadSettings()
+if SETTINGS.boothMoveWalkEnabled ~= nil and SETTINGS.boothMoveMode == nil then
+    SETTINGS.boothMoveMode = SETTINGS.boothMoveWalkEnabled and "Walk" or "Teleport"
+end
+if not SETTINGS.boothMoveMode or (SETTINGS.boothMoveMode ~= "Walk" and SETTINGS.boothMoveMode ~= "Teleport") then
+    SETTINGS.boothMoveMode = "Teleport"
+end
 if not SETTINGS.selectedEmote or type(SETTINGS.selectedEmote) ~= "string" or SETTINGS.selectedEmote == "" then
     SETTINGS.selectedEmote = EMOTE_OPTIONS[1].name
 end
@@ -816,12 +823,13 @@ boothInfoLabel.Size = UDim2.new(0.95,0,0,36)
 boothInfoLabel.TextWrapped = true
 boothInfoLabel.TextYAlignment = Enum.TextYAlignment.Top
 
-local boothMoveWalkToggle, _ = addToggle(frames.Booth, "Enabled booth move walk/teleport", SETTINGS.boothMoveWalkEnabled, function(enabled)
-    SETTINGS.boothMoveWalkEnabled = enabled and true or false
+local boothMoveModeSelector, boothMoveModeContainer = addRadioGroup(frames.Booth, {"Walk", "Teleport"}, SETTINGS.boothMoveMode or "Teleport", function(mode)
+    SETTINGS.boothMoveMode = tostring(mode or "Teleport")
     pcall(saveSettings)
-    showNotification(enabled and "Booth move walk/teleport enabled" or "Booth move walk/teleport disabled")
+    showNotification("Booth move mode: " .. tostring(SETTINGS.boothMoveMode))
 end)
-boothMoveWalkToggle:Set(SETTINGS.boothMoveWalkEnabled)
+boothMoveModeContainer.Size = UDim2.new(0.95,0,0,42)
+addLabel(frames.Booth, "Booth Move Mode")
 
 addLabel(frames.Booth, "Booth Text Editor")
 local boothTextBox = new(frames.Booth, "TextBox", {
@@ -971,7 +979,8 @@ local function teleportToBoothAndClaim(model)
             return false
         end
 
-        if SETTINGS.boothMoveWalkEnabled then
+        local mode = string.lower(tostring(SETTINGS.boothMoveMode or "Teleport"))
+        if mode == "walk" then
             local oldWalkSpeed = human.WalkSpeed
             local oldJumpPower = human.JumpPower
             local oldAutoRotate = human.AutoRotate
@@ -980,17 +989,46 @@ local function teleportToBoothAndClaim(model)
             human.JumpPower = 0
             human.AutoRotate = true
             human.Sit = false
-            if lookAt then
-                local lookDirection = (lookAt - targetPos)
-                if lookDirection.Magnitude > 0.01 then
-                    hrp.CFrame = CFrame.new(targetPos, targetPos + lookDirection.Unit)
+
+            local path = PathfindingService:CreatePath({
+                AgentRadius = 3,
+                AgentHeight = 5,
+                AgentCanJump = false,
+                WaypointSpacing = 2,
+            })
+
+            local pathStatus, pathResult = pcall(function()
+                return path:ComputeAsync(hrp.Position, targetPos)
+            end)
+
+            local function waitForReach(destination)
+                local goalTime = os.clock() + 8
+                while os.clock() < goalTime do
+                    if (hrp.Position - destination).Magnitude < 3 then
+                        return true
+                    end
+                    task.wait(0.05)
                 end
+                return false
             end
-            human:MoveTo(targetPos)
-            local startTime = os.clock()
-            while (hrp.Position - targetPos).Magnitude > 2.2 and os.clock() - startTime < 8 do
-                task.wait(0.05)
+
+            if pathStatus and pathResult and path.Status == Enum.PathStatus.Success then
+                local waypoints = path:GetWaypoints()
+                for _, waypoint in ipairs(waypoints) do
+                    if waypoint.Action == Enum.PathWaypointAction.Jump then
+                        human.Jump = true
+                    end
+                    human:MoveTo(waypoint.Position)
+                    local reached = waitForReach(waypoint.Position)
+                    if not reached then
+                        break
+                    end
+                end
+            else
+                human:MoveTo(targetPos)
+                waitForReach(targetPos)
             end
+
             human.WalkSpeed = oldWalkSpeed
             human.JumpPower = oldJumpPower
             human.AutoRotate = oldAutoRotate
