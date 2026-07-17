@@ -363,6 +363,7 @@ local SETTINGS = {
     serverStayMinutes = 5,
     serverPreferredPlayers = "0", -- 0 = disabled; exact player count or range to target
     boothPosition = "Front",
+    boothMoveWalkEnabled = false,
     webhookUrl = "",
     boothText = "Any donation brightens my day! ❤️",
     -- main
@@ -529,15 +530,18 @@ local function cleanupWorkspaceBancas()
     local removed = 0
     local descendants = workspace:GetDescendants()
     for _, instance in ipairs(descendants) do
-        if instance:IsA("Model") and string.lower(instance.Name or "") == "bancas" then
-            pcall(function()
-                instance:Destroy()
-                removed = removed + 1
-            end)
+        if instance:IsA("Model") then
+            local modelName = string.lower(instance.Name or "")
+            if modelName == "bancas" or modelName == "bench" then
+                pcall(function()
+                    instance:Destroy()
+                    removed = removed + 1
+                end)
+            end
         end
     end
     if removed > 0 then
-        showNotification("Removed " .. tostring(removed) .. " workspace Banca model(s)")
+        showNotification("Removed " .. tostring(removed) .. " workspace booth clutter model(s)")
     end
 end
 cleanupWorkspaceBancas()
@@ -812,6 +816,13 @@ boothInfoLabel.Size = UDim2.new(0.95,0,0,36)
 boothInfoLabel.TextWrapped = true
 boothInfoLabel.TextYAlignment = Enum.TextYAlignment.Top
 
+local boothMoveWalkToggle, _ = addToggle(frames.Booth, "Enabled booth move walk/teleport", SETTINGS.boothMoveWalkEnabled, function(enabled)
+    SETTINGS.boothMoveWalkEnabled = enabled and true or false
+    pcall(saveSettings)
+    showNotification(enabled and "Booth move walk/teleport enabled" or "Booth move walk/teleport disabled")
+end)
+boothMoveWalkToggle:Set(SETTINGS.boothMoveWalkEnabled)
+
 addLabel(frames.Booth, "Booth Text Editor")
 local boothTextBox = new(frames.Booth, "TextBox", {
     Text = tostring(SETTINGS.boothText or "Any donation brightens my day! ❤️"),
@@ -954,6 +965,43 @@ local function teleportToBoothAndClaim(model)
     local anchorPart = claimedPart or model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart")
     if not anchorPart then return false end
 
+    local function moveCharacterToTarget(targetPos, lookAt, speed)
+        local human = char:FindFirstChildOfClass("Humanoid")
+        if not human then
+            return false
+        end
+
+        if SETTINGS.boothMoveWalkEnabled then
+            local oldWalkSpeed = human.WalkSpeed
+            local oldJumpPower = human.JumpPower
+            local oldAutoRotate = human.AutoRotate
+            local oldSit = human.Sit
+            human.WalkSpeed = tonumber(speed or 20) or 20
+            human.JumpPower = 0
+            human.AutoRotate = true
+            human.Sit = false
+            if lookAt then
+                local lookDirection = (lookAt - targetPos)
+                if lookDirection.Magnitude > 0.01 then
+                    hrp.CFrame = CFrame.new(targetPos, targetPos + lookDirection.Unit)
+                end
+            end
+            human:MoveTo(targetPos)
+            local startTime = os.clock()
+            while (hrp.Position - targetPos).Magnitude > 2.2 and os.clock() - startTime < 8 do
+                task.wait(0.05)
+            end
+            human.WalkSpeed = oldWalkSpeed
+            human.JumpPower = oldJumpPower
+            human.AutoRotate = oldAutoRotate
+            human.Sit = oldSit
+            return (hrp.Position - targetPos).Magnitude <= 2.2
+        end
+
+        setPlayerPosition(targetPos, lookAt)
+        return true
+    end
+
     local function getFacingDirection(cframe, towardPosition)
         local front = cframe.LookVector
         if towardPosition and (towardPosition - cframe.Position).Magnitude > 0 then
@@ -983,7 +1031,7 @@ local function teleportToBoothAndClaim(model)
 
     local initialPos = Vector3.new(anchorPart.Position.X, anchorPart.Position.Y + 2, anchorPart.Position.Z)
     local initialLook = (hrp.CFrame and hrp.CFrame.LookVector) or Vector3.new(0, 0, -1)
-    setPlayerPosition(initialPos, initialPos + initialLook)
+    moveCharacterToTarget(initialPos, initialPos + initialLook, 20)
     task.wait(0.12)
 
     -- Give the booth and prompt a short moment to settle before claiming from range
@@ -1123,8 +1171,10 @@ local function teleportToBoothAndClaim(model)
         for _, attempt in ipairs(attempts) do
             local tryPos = Vector3.new(promptPosition.X + attempt.offset.X, promptPosition.Y + 2 + attempt.offset.Y, promptPosition.Z + attempt.offset.Z)
             local lookAt = promptPosition + Vector3.new(0, 1.2, 0)
-            setPlayerPosition(tryPos, lookAt)
-            task.wait(0.06)
+            local moveOk = moveCharacterToTarget(tryPos, lookAt, 20)
+            if not moveOk then
+                task.wait(0.06)
+            end
 
             local fired = false
 
@@ -1184,19 +1234,19 @@ local function teleportToBoothAndClaim(model)
     if okFire then
         task.wait(0.08)
         local frontDir = getFacingDirection(promptCFrame or anchorPart.CFrame, anchorPart.Position)
-        setPlayerPosition(finalPos, finalPos + frontDir)
+        moveCharacterToTarget(finalPos, finalPos + frontDir, 20)
         task.wait(5.5)
         local afterPos = getAfterClaimPosition()
-        setPlayerPosition(afterPos, afterPos + boothFront)
+        moveCharacterToTarget(afterPos, afterPos + boothFront, 20)
         task.wait(0.35)
-        setPlayerPosition(afterPos, afterPos + boothFront)
+        moveCharacterToTarget(afterPos, afterPos + boothFront, 20)
         local ownerOk = secureBoothOwnership(model)
         return ownerOk
     end
 
     task.wait(0.08)
     local fallbackDir = getFacingDirection(promptCFrame or anchorPart.CFrame, anchorPart.Position)
-    setPlayerPosition(finalPos, finalPos + fallbackDir)
+    moveCharacterToTarget(finalPos, finalPos + fallbackDir, 20)
     task.wait(0.12)
 
     if prompt then
@@ -1206,9 +1256,9 @@ local function teleportToBoothAndClaim(model)
     if okFire then
         task.wait(5.5)
         local afterPos = getAfterClaimPosition()
-        setPlayerPosition(afterPos, afterPos + boothFront)
+        moveCharacterToTarget(afterPos, afterPos + boothFront, 20)
         task.wait(0.35)
-        setPlayerPosition(afterPos, afterPos + boothFront)
+        moveCharacterToTarget(afterPos, afterPos + boothFront, 20)
         local ownerOk = secureBoothOwnership(model)
         return ownerOk
     end
