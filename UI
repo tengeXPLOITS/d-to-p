@@ -112,6 +112,66 @@ local function simulateDonation(amount)
     return raised.Value
 end
 
+local function getNearestDonorLabel()
+    local ok, donorInfo = pcall(function()
+        if type(getnearestplayerinfo) == "function" then
+            return getnearestplayerinfo()
+        elseif type(getNearestPlayerInfo) == "function" then
+            return getNearestPlayerInfo()
+        end
+        return nil
+    end)
+
+    if ok and donorInfo then
+        if type(donorInfo) == "table" then
+            return tostring(donorInfo.username or donorInfo.Name or donorInfo.name or donorInfo.UserName or LocalPlayer.Name)
+        end
+        return tostring(donorInfo)
+    end
+
+    return tostring(LocalPlayer.Name)
+end
+
+local function startDonationRaisedWebhookWatcher()
+    local raised = ensureRaisedStat()
+    local lastRaised = parseNumberValue(raised.Value) or 0
+
+    if donationRaisedWebhookConn then
+        return
+    end
+
+    donationRaisedWebhookConn = raised:GetPropertyChangedSignal("Value"):Connect(function()
+        local currentRaised = parseNumberValue(raised.Value) or 0
+        local delta = currentRaised - lastRaised
+        if delta > 0 then
+            local donorLabel = getNearestDonorLabel()
+            local webhookOk, webhookErr = sendWebhookEvent(
+                "Donation Received",
+                "Raised increased by " .. tostring(delta) .. " from " .. tostring(lastRaised) .. " to " .. tostring(currentRaised),
+                {
+                    { name = "Donor", value = donorLabel, inline = true },
+                    { name = "Delta", value = tostring(delta), inline = true },
+                    { name = "Raised", value = tostring(currentRaised), inline = true },
+                },
+                {
+                    color = 0x2ECC71,
+                    author = { name = "DonateToPlayers UI" },
+                    footer = { text = "leaderstats.Raised webhook trigger" },
+                }
+            )
+            if webhookOk then
+                pcall(function()
+                    showNotification("Donation webhook sent: +" .. tostring(delta))
+                end)
+            else
+                pcall(function()
+                    showNotification("Donation webhook failed: " .. tostring(webhookErr))
+                end)
+            end
+        end
+        lastRaised = currentRaised
+    end)
+end
 
 local function getExecutionKey()
     return tostring(LocalPlayer.UserId) .. ":" .. tostring(game.JobId)
@@ -352,6 +412,9 @@ loadSettings()
 if not SETTINGS.selectedEmote or type(SETTINGS.selectedEmote) ~= "string" or SETTINGS.selectedEmote == "" then
     SETTINGS.selectedEmote = EMOTE_OPTIONS[1].name
 end
+
+local donationRaisedWebhookConn = nil
+startDonationRaisedWebhookWatcher()
 
 local function parseServerStayDuration(rawValue)
     if rawValue == nil then
@@ -701,17 +764,17 @@ local function addRadioGroup(parent, options, initial, callback)
 end
 
 local function addDropdown(parent, labelText, options, initial, callback)
-    local collapsedHeight = 34
-    local expandedHeight = collapsedHeight + (#options * 30)
+    local collapsedHeight = 42
+    local expandedHeight = collapsedHeight + (#options * 32)
     local container = new(parent, "Frame", {Size = UDim2.new(0.95,0,0,collapsedHeight), BackgroundTransparency = 1})
     local label = new(container, "TextLabel", {Text = labelText, BackgroundTransparency = 1, TextColor3 = Color3.new(1,1,1), Font = Enum.Font.Gotham, TextSize = 14, Position = UDim2.new(0,0,0,0), Size = UDim2.new(0.2,0,0,1), TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Center})
     local selected = initial or options[1]
-    local button = new(container, "TextButton", {Text = selected, Size = UDim2.new(0.75,0,0,1), Position = UDim2.new(0.25,0,0,0), BackgroundColor3 = Color3.fromRGB(28,73,140), TextColor3 = Color3.new(1,1,1), Font = Enum.Font.Gotham, TextSize = 14, AutoButtonColor = true})
+    local button = new(container, "TextButton", {Text = selected, Size = UDim2.new(0.75,0,0,38), Position = UDim2.new(0.25,0,0,2), BackgroundColor3 = Color3.fromRGB(28,73,140), TextColor3 = Color3.new(1,1,1), Font = Enum.Font.Gotham, TextSize = 14, AutoButtonColor = true})
     local optionFrame = new(container, "Frame", {Position = UDim2.new(0,0,0,collapsedHeight), Size = UDim2.new(1,0,0,0), BackgroundColor3 = Color3.fromRGB(24,24,24), BorderSizePixel = 0, ClipsDescendants = true})
     local optionLayout = new(optionFrame, "UIListLayout", {Padding = UDim.new(0,2), FillDirection = Enum.FillDirection.Vertical, SortOrder = Enum.SortOrder.LayoutOrder})
     local expanded = false
     for _, option in ipairs(options) do
-        local optBtn = new(optionFrame, "TextButton", {Text = option, Size = UDim2.new(1,0,0,28), BackgroundColor3 = Color3.fromRGB(40,40,40), TextColor3 = Color3.new(1,1,1), Font = Enum.Font.Gotham, TextSize = 14, AutoButtonColor = true})
+        local optBtn = new(optionFrame, "TextButton", {Text = option, Size = UDim2.new(1,0,0,30), BackgroundColor3 = Color3.fromRGB(40,40,40), TextColor3 = Color3.new(1,1,1), Font = Enum.Font.Gotham, TextSize = 14, AutoButtonColor = true})
         optBtn.MouseButton1Click:Connect(function()
             selected = option
             button.Text = option
@@ -724,7 +787,7 @@ local function addDropdown(parent, labelText, options, initial, callback)
     button.MouseButton1Click:Connect(function()
         expanded = not expanded
         if expanded then
-            optionFrame.Size = UDim2.new(1,0,0,#options * 30)
+            optionFrame.Size = UDim2.new(1,0,0,#options * 32)
             container.Size = UDim2.new(0.95,0,0,expandedHeight)
         else
             optionFrame.Size = UDim2.new(1,0,0,0)
