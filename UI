@@ -68,40 +68,10 @@ local function findRaisedStat()
     return findStat(LocalPlayer)
 end
 
-local function findPendingValue()
-    local pendingRoot
-    for _, desc in ipairs(LocalPlayer:GetDescendants()) do
-        if desc.Name == "PedingRobux" then
-            pendingRoot = desc
-            break
-        end
-    end
-    if not pendingRoot then
-        return nil
-    end
-    local pendingText
-    local listObj = pendingRoot:FindFirstChild("PedingRobuxList") or pendingRoot:FindFirstChild("Pending")
-    if listObj then
-        pendingText = listObj.Text or listObj.Value
-    else
-        for _, desc in ipairs(pendingRoot:GetDescendants()) do
-            if desc.Name == "PedingRobuxList" or desc.Name == "Pending" then
-                pendingText = desc.Text or desc.Value
-                break
-            end
-        end
-    end
-    return parseNumberValue(pendingText)
-end
-
 local function getCurrentRaisedValue()
     local stat = findRaisedStat()
     if not stat then return nil end
     return parseNumberValue(stat.Value)
-end
-
-local function getCurrentPendingValue()
-    return findPendingValue()
 end
 
 local function simulateDonation(amount)
@@ -320,7 +290,7 @@ local function notifyScriptExecution()
         { name = "Players", value = tostring(playerCount), inline = true },
     }, {
         color = color,
-        author = { name = "DonateToPlayers UI by K..." },
+        author = { name = "thanks for using" },
     })
 end
 
@@ -596,7 +566,7 @@ local title = new(titleBar, "TextLabel", {
     Font = Enum.Font.GothamBold,
     TextSize = 18,
     Position = UDim2.new(0, 12, 0, 2),
-    Size = UDim2.new(1, -24, 0, 18),
+    Size = UDim2.new(1, -56, 0, 18),
     TextXAlignment = Enum.TextXAlignment.Left,
     TextYAlignment = Enum.TextYAlignment.Center,
     TextWrapped = false,
@@ -608,10 +578,22 @@ local subtitle = new(titleBar, "TextLabel", {
     Font = Enum.Font.GothamBold,
     TextSize = 13,
     Position = UDim2.new(0, 12, 0, 18),
-    Size = UDim2.new(1, -24, 0, 14),
+    Size = UDim2.new(1, -56, 0, 14),
     TextXAlignment = Enum.TextXAlignment.Left,
     TextYAlignment = Enum.TextYAlignment.Top,
 })
+local collapseToggle = new(titleBar, "TextButton", {
+    Text = "▾",
+    BackgroundColor3 = Color3.fromRGB(88, 88, 88),
+    TextColor3 = Color3.new(1,1,1),
+    Font = Enum.Font.GothamBold,
+    TextSize = 18,
+    Size = UDim2.new(0, 22, 0, 22),
+    Position = UDim2.new(1, -28, 0, 7),
+    AutoButtonColor = false,
+    BorderSizePixel = 0,
+})
+pcall(function() new(collapseToggle, "UICorner", {CornerRadius = UDim.new(0, 6)}) end)
 
 -- Tab buttons
 local tabBar = new(window, "Frame", {
@@ -667,6 +649,21 @@ local content = new(window, "Frame", {
     Size = UDim2.new(1,-16,1,-100),
     BackgroundTransparency = 1,
 })
+
+local collapsed = false
+local function setContentCollapsed(isCollapsed)
+    collapsed = isCollapsed and true or false
+    collapseToggle.Text = collapsed and "▸" or "▾"
+    content.Visible = not collapsed
+    if collapsed then
+        window.Size = UDim2.new(window.Size.X.Scale, window.Size.X.Offset, 0, 48)
+    else
+        onResize()
+    end
+end
+collapseToggle.MouseButton1Click:Connect(function()
+    setContentCollapsed(not collapsed)
+end)
 
 local function makeContentFrame(name)
     local f = new(content, "ScrollingFrame", {
@@ -1621,6 +1618,18 @@ local function sortCandidatesByPreferred(candidates, prefRange)
     return candidates
 end
 
+local function sortCandidatesByPlayerCount(candidates)
+    table.sort(candidates, function(a, b)
+        local aPlaying = tonumber(a.playing) or 0
+        local bPlaying = tonumber(b.playing) or 0
+        if aPlaying ~= bPlaying then
+            return aPlaying > bPlaying
+        end
+        return (tonumber(a.maxPlayers) or 0) > (tonumber(b.maxPlayers) or 0)
+    end)
+    return candidates
+end
+
 local function getCommunityPlaceIds()
     local placeIds = {}
     local seen = {}
@@ -1780,13 +1789,13 @@ function serverHopNow(immediate)
                                 if prefRange.max > 0 and notFull and prefersServer(playing, prefRange) then
                                     table.insert(preferred, { id = v.id, playing = playing, maxPlayers = maxP })
                                 elseif minPlayers > 0 and playing >= minPlayers and notFull then
-                                    table.insert(busy, v.id)
+                                    table.insert(busy, { id = v.id, playing = playing, maxPlayers = maxP })
                                 elseif playing and maxP and playing >= SERVER_HOP_FALLBACK_MIN_PLAYERS and playing <= SERVER_HOP_FALLBACK_MAX_PLAYERS and playing < maxP then
-                                    table.insert(highPop, v.id)
+                                    table.insert(highPop, { id = v.id, playing = playing, maxPlayers = maxP })
                                 elseif playing and maxP and playing < maxP then
-                                    table.insert(available, v.id)
+                                    table.insert(available, { id = v.id, playing = playing, maxPlayers = maxP })
                                 elseif notFull then
-                                    table.insert(other, v.id)
+                                    table.insert(other, { id = v.id, playing = playing, maxPlayers = maxP })
                                 end
                                 if notFull then
                                     availableServerCount = availableServerCount + 1
@@ -1796,7 +1805,7 @@ function serverHopNow(immediate)
 
                         if prefRange.max > 0 and #preferred > 0 then
                             preferred = sortCandidatesByPreferred(preferred, prefRange)
-                            servers = { preferred[1].id }
+                            servers = { preferred[1] }
                         elseif minPlayers > 0 then
                             servers = busy
                             if #servers == 0 then
@@ -1808,10 +1817,15 @@ function serverHopNow(immediate)
                             if #servers == 0 then
                                 servers = other
                             end
+                            if #servers > 0 then
+                                servers = sortCandidatesByPlayerCount(servers)
+                            end
+                        elseif #highPop > 0 then
+                            servers = sortCandidatesByPlayerCount(highPop)
                         elseif #available > 0 then
-                            servers = available
+                            servers = sortCandidatesByPlayerCount(available)
                         else
-                            servers = other
+                            servers = sortCandidatesByPlayerCount(other)
                         end
 
                         if prefRange.max > 0 and #servers == 0 then
@@ -1838,7 +1852,8 @@ function serverHopNow(immediate)
             if #servers == 0 then
                 -- no matching server found
             else
-                local instanceId = servers[math.random(1, #servers)]
+                local selectedServer = servers[math.random(1, #servers)]
+                local instanceId = (type(selectedServer) == "table" and selectedServer.id) or selectedServer
                 local ok, err = tryTeleportToServer(placeId, instanceId)
                 if ok then
                     showNotification("Teleporting to another server")
@@ -1923,6 +1938,9 @@ local startPos = window.Position
 
 titleBar.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        if input.Position.X >= titleBar.AbsoluteSize.X - 32 and input.Position.Y <= 28 then
+            return
+        end
         dragging = true
         dragStart = input.Position
         startPos = window.Position
