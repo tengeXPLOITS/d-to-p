@@ -1749,6 +1749,7 @@ function serverHopNow(immediate)
                         local available = {}
                         local other = {}
                         local highPop = {}
+                        local allCandidates = {}
                         local minPlayers = shouldUseAntiNonBusyServers() and SERVER_HOP_MIN_PLAYERS or 0
                         local prefRange = parsePreferredPlayerTarget(SETTINGS.serverPreferredPlayers)
                         for _, v in ipairs(body.data) do
@@ -1759,16 +1760,20 @@ function serverHopNow(immediate)
                                 local playing = tonumber(v.playing) or 0
                                 local maxP = tonumber(v.maxPlayers) or 0
                                 local notFull = (maxP > 0) and (playing < maxP) or true
+                                local candidate = { id = v.id, playing = playing, maxPlayers = maxP }
+                                if notFull then
+                                    table.insert(allCandidates, candidate)
+                                end
                                 if prefRange.max > 0 and notFull and prefersServer(playing, prefRange) then
-                                    table.insert(preferred, { id = v.id, playing = playing, maxPlayers = maxP })
+                                    table.insert(preferred, candidate)
                                 elseif minPlayers > 0 and playing >= minPlayers and notFull then
-                                    table.insert(busy, { id = v.id, playing = playing, maxPlayers = maxP })
+                                    table.insert(busy, candidate)
                                 elseif playing and maxP and playing >= SERVER_HOP_FALLBACK_MIN_PLAYERS and playing <= SERVER_HOP_FALLBACK_MAX_PLAYERS and playing < maxP then
-                                    table.insert(highPop, { id = v.id, playing = playing, maxPlayers = maxP })
+                                    table.insert(highPop, candidate)
                                 elseif playing and maxP and playing < maxP then
-                                    table.insert(available, { id = v.id, playing = playing, maxPlayers = maxP })
+                                    table.insert(available, candidate)
                                 elseif notFull then
-                                    table.insert(other, { id = v.id, playing = playing, maxPlayers = maxP })
+                                    table.insert(other, candidate)
                                 end
                                 if notFull then
                                     availableServerCount = availableServerCount + 1
@@ -1779,6 +1784,9 @@ function serverHopNow(immediate)
                         if prefRange.max > 0 and #preferred > 0 then
                             preferred = sortCandidatesByPreferred(preferred, prefRange)
                             servers = { preferred[1] }
+                        elseif prefRange.max > 0 and #allCandidates > 0 then
+                            allCandidates = sortCandidatesByPlayerCount(allCandidates)
+                            servers = { allCandidates[1] }
                         elseif minPlayers > 0 then
                             servers = busy
                             if #servers == 0 then
@@ -1802,7 +1810,9 @@ function serverHopNow(immediate)
                         end
 
                         if prefRange.max > 0 and #servers == 0 then
-                            if #highPop > 0 then
+                            if #allCandidates > 0 then
+                                servers = { allCandidates[1] }
+                            elseif #highPop > 0 then
                                 servers = { highPop[1] }
                             elseif #available > 0 then
                                 servers = { available[1] }
