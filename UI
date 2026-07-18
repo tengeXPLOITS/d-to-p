@@ -140,36 +140,52 @@ local function startDonationRaisedWebhookWatcher()
         return
     end
 
-    donationRaisedWebhookConn = raised:GetPropertyChangedSignal("Value"):Connect(function()
-        local currentRaised = parseNumberValue(raised.Value) or 0
+    local function maybeSendDonationWebhook(currentRaised)
         local delta = currentRaised - lastRaised
-        if delta > 0 then
-            local donorLabel = getNearestDonorLabel()
-            local webhookOk, webhookErr = sendWebhookEvent(
-                "Donation Received",
-                "Raised increased by " .. tostring(delta) .. " from " .. tostring(lastRaised) .. " to " .. tostring(currentRaised),
-                {
-                    { name = "Donor", value = donorLabel, inline = true },
-                    { name = "Delta", value = tostring(delta), inline = true },
-                    { name = "Raised", value = tostring(currentRaised), inline = true },
-                },
-                {
-                    color = 0x2ECC71,
-                    author = { name = "DonateToPlayers UI" },
-                    footer = { text = "leaderstats.Raised webhook trigger" },
-                }
-            )
-            if webhookOk then
-                pcall(function()
-                    showNotification("Donation webhook sent: +" .. tostring(delta))
-                end)
-            else
-                pcall(function()
-                    showNotification("Donation webhook failed: " .. tostring(webhookErr))
-                end)
-            end
+        if delta <= 0 then
+            return
+        end
+
+        local donorLabel = getNearestDonorLabel()
+        local webhookOk, webhookErr = sendWebhookEvent(
+            "Donation Received",
+            "Raised increased by " .. tostring(delta) .. " from " .. tostring(lastRaised) .. " to " .. tostring(currentRaised),
+            {
+                { name = "Donor", value = donorLabel, inline = true },
+                { name = "Delta", value = tostring(delta), inline = true },
+                { name = "Raised", value = tostring(currentRaised), inline = true },
+            },
+            {
+                color = 0x2ECC71,
+                author = { name = "DonateToPlayers UI" },
+                footer = { text = "leaderstats.Raised webhook trigger" },
+            }
+        )
+        if webhookOk then
+            pcall(function()
+                showNotification("Donation webhook sent: +" .. tostring(delta))
+            end)
+        else
+            pcall(function()
+                showNotification("Donation webhook failed: " .. tostring(webhookErr))
+            end)
         end
         lastRaised = currentRaised
+    end
+
+    donationRaisedWebhookConn = raised:GetPropertyChangedSignal("Value"):Connect(function()
+        local currentRaised = parseNumberValue(raised.Value) or 0
+        maybeSendDonationWebhook(currentRaised)
+    end)
+
+    task.spawn(function()
+        while donationRaisedWebhookConn do
+            local currentRaised = parseNumberValue(raised.Value) or 0
+            if currentRaised > lastRaised then
+                maybeSendDonationWebhook(currentRaised)
+            end
+            task.wait(0.6)
+        end
     end)
 end
 
@@ -570,10 +586,11 @@ pcall(function() new(window, "UICorner", {CornerRadius = UDim.new(0,8)}) end)
 local titleBar = new(window, "Frame", {
     Name = "TitleBar",
     Size = UDim2.new(1,0,0,36),
-    BackgroundColor3 = Color3.fromRGB(0, 120, 215),
+    BackgroundColor3 = Color3.fromRGB(74, 74, 74),
 })
+pcall(function() new(titleBar, "UICorner", {CornerRadius = UDim.new(0, 8)}) end)
 local title = new(titleBar, "TextLabel", {
-    Text = "Donate To Plrs <3",
+    Text = "Donar a los jugadores",
     TextColor3 = Color3.new(1,1,1),
     BackgroundTransparency = 1,
     Font = Enum.Font.GothamBold,
@@ -585,7 +602,7 @@ local title = new(titleBar, "TextLabel", {
     TextWrapped = false,
 })
 local subtitle = new(titleBar, "TextLabel", {
-    Text = "@k0yg",
+    Text = "all dono games dead LOL",
     BackgroundTransparency = 1,
     TextColor3 = Color3.new(1, 1, 1),
     Font = Enum.Font.GothamBold,
@@ -707,7 +724,7 @@ local function addLabel(parent, text)
 end
 
 local function addButton(parent, text, cb)
-    local btn = new(parent, "TextButton", {Text = text, Size = UDim2.new(0.9,0,0,34), BackgroundColor3=Color3.fromRGB(0,102,204), TextColor3=Color3.new(1,1,1), Font=Enum.Font.Gotham, TextSize=14})
+    local btn = new(parent, "TextButton", {Text = text, Size = UDim2.new(0.9,0,0,34), BackgroundColor3=Color3.fromRGB(74,74,74), TextColor3=Color3.new(1,1,1), Font=Enum.Font.Gotham, TextSize=14})
     btn.AutoButtonColor = true
     pcall(function() new(btn, "UICorner", {CornerRadius = UDim.new(0,6)}) end)
     btn.MouseButton1Click:Connect(function() pcall(cb) end)
@@ -726,7 +743,7 @@ end
 local function addToggle(parent, labelText, initial, callback)
     local container = new(parent, "Frame", {Size = UDim2.new(0.9,0,0,34), BackgroundTransparency = 1})
     local lbl = new(container, "TextLabel", {Text = labelText, BackgroundTransparency = 1, TextColor3 = Color3.new(1,1,1), Font = Enum.Font.Gotham, TextSize = 14, Position = UDim2.new(0,0,0,2), Size = UDim2.new(0.8,0,1,0), TextXAlignment = Enum.TextXAlignment.Left})
-    local box = new(container, "TextButton", {Text = initial and "✓" or "", BackgroundColor3 = Color3.fromRGB(28,73,140), TextColor3 = Color3.new(1,1,1), Size = UDim2.new(0,28,0,28), Position = UDim2.new(1,-28,0,3), AutoButtonColor = true, Font = Enum.Font.Gotham, TextSize = 18})
+    local box = new(container, "TextButton", {Text = initial and "✓" or "", BackgroundColor3 = Color3.fromRGB(78,78,78), TextColor3 = Color3.new(1,1,1), Size = UDim2.new(0,28,0,28), Position = UDim2.new(1,-28,0,3), AutoButtonColor = true, Font = Enum.Font.Gotham, TextSize = 18})
     local toggled = initial
     box.MouseButton1Click:Connect(function()
         toggled = not toggled
@@ -759,14 +776,14 @@ local function addRadioGroup(parent, options, initial, callback)
         btn.MouseButton1Click:Connect(function()
             selected = opt
             for k, b in pairs(buttons) do
-                b.BackgroundColor3 = (k == selected) and Color3.fromRGB(28,73,140) or Color3.fromRGB(60,60,60)
+                b.BackgroundColor3 = (k == selected) and Color3.fromRGB(82,82,82) or Color3.fromRGB(60,60,60)
             end
             pcall(callback, selected)
         end)
     end
     -- initialize visuals
     for k, b in pairs(buttons) do
-        b.BackgroundColor3 = (k == initial) and Color3.fromRGB(28,73,140) or Color3.fromRGB(60,60,60)
+        b.BackgroundColor3 = (k == initial) and Color3.fromRGB(82,82,82) or Color3.fromRGB(60,60,60)
     end
     return function() return selected end, container
 end
@@ -777,7 +794,7 @@ local function addDropdown(parent, labelText, options, initial, callback)
     local container = new(parent, "Frame", {Size = UDim2.new(0.95,0,0,collapsedHeight), BackgroundTransparency = 1})
     local label = new(container, "TextLabel", {Text = labelText, BackgroundTransparency = 1, TextColor3 = Color3.new(1,1,1), Font = Enum.Font.Gotham, TextSize = 14, Position = UDim2.new(0,0,0,0), Size = UDim2.new(0.2,0,0,1), TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Center})
     local selected = initial or options[1]
-    local button = new(container, "TextButton", {Text = selected, Size = UDim2.new(0.75,0,0,38), Position = UDim2.new(0.25,0,0,2), BackgroundColor3 = Color3.fromRGB(28,73,140), TextColor3 = Color3.new(1,1,1), Font = Enum.Font.Gotham, TextSize = 14, AutoButtonColor = true})
+    local button = new(container, "TextButton", {Text = selected, Size = UDim2.new(0.75,0,0,38), Position = UDim2.new(0.25,0,0,2), BackgroundColor3 = Color3.fromRGB(78,78,78), TextColor3 = Color3.new(1,1,1), Font = Enum.Font.Gotham, TextSize = 14, AutoButtonColor = true})
     local optionFrame = new(container, "Frame", {Position = UDim2.new(0,0,0,collapsedHeight), Size = UDim2.new(1,0,0,0), BackgroundColor3 = Color3.fromRGB(24,24,24), BorderSizePixel = 0, ClipsDescendants = true})
     local optionLayout = new(optionFrame, "UIListLayout", {Padding = UDim.new(0,2), FillDirection = Enum.FillDirection.Vertical, SortOrder = Enum.SortOrder.LayoutOrder})
     local expanded = false
@@ -1438,8 +1455,8 @@ local function addDanceControls()
         end
     end)
     local btnRow = new(frames.Main, "Frame", {Size = UDim2.new(0.95,0,0,40), BackgroundTransparency = 1})
-    local startDanceBtn = new(btnRow, "TextButton", {Text = "Start Dancing", Size = UDim2.new(0.48,0,1,0), Position = UDim2.new(0,0,0,0), BackgroundColor3 = Color3.fromRGB(0,102,204), TextColor3 = Color3.new(1,1,1), Font = Enum.Font.Gotham, TextSize = 14, AutoButtonColor = true})
-    local stopDanceBtn = new(btnRow, "TextButton", {Text = "Stop Dancing", Size = UDim2.new(0.48,0,1,0), Position = UDim2.new(0.52,0,0,0), BackgroundColor3 = Color3.fromRGB(0,102,204), TextColor3 = Color3.new(1,1,1), Font = Enum.Font.Gotham, TextSize = 14, AutoButtonColor = true})
+    local startDanceBtn = new(btnRow, "TextButton", {Text = "Start Dancing", Size = UDim2.new(0.48,0,1,0), Position = UDim2.new(0,0,0,0), BackgroundColor3 = Color3.fromRGB(74,74,74), TextColor3 = Color3.new(1,1,1), Font = Enum.Font.Gotham, TextSize = 14, AutoButtonColor = true})
+    local stopDanceBtn = new(btnRow, "TextButton", {Text = "Stop Dancing", Size = UDim2.new(0.48,0,1,0), Position = UDim2.new(0.52,0,0,0), BackgroundColor3 = Color3.fromRGB(74,74,74), TextColor3 = Color3.new(1,1,1), Font = Enum.Font.Gotham, TextSize = 14, AutoButtonColor = true})
     pcall(function() new(startDanceBtn, "UICorner", {CornerRadius = UDim.new(0,6)}) end)
     pcall(function() new(stopDanceBtn, "UICorner", {CornerRadius = UDim.new(0,6)}) end)
     startDanceBtn.MouseButton1Click:Connect(function()
@@ -1664,6 +1681,10 @@ local function getHopPlaceIds()
     return ids
 end
 
+local function isCurrentServerId(serverId)
+    return tostring(serverId or "") == tostring(game.JobId or "")
+end
+
 local function getHopPlaceId()
     local ids = getHopPlaceIds()
     if ids and #ids > 0 then
@@ -1750,6 +1771,9 @@ function serverHopNow(immediate)
                         local prefRange = parsePreferredPlayerTarget(SETTINGS.serverPreferredPlayers)
                         for _, v in ipairs(body.data) do
                             if type(v) == "table" and v.id then
+                                if isCurrentServerId(v.id) then
+                                    continue
+                                end
                                 local playing = tonumber(v.playing) or 0
                                 local maxP = tonumber(v.maxPlayers) or 0
                                 local notFull = (maxP > 0) and (playing < maxP) or true
