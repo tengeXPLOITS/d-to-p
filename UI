@@ -5,6 +5,7 @@ local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 local TeleportService = game:GetService("TeleportService")
 local HttpService = game:GetService("HttpService")
+local PathfindingService = game:GetService("PathfindingService")
 local httprequest = (syn and syn.request) or (http and http.request) or http_request or (fluxus and fluxus.request) or request
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
@@ -1364,15 +1365,17 @@ local autoWalkToggle, _ = addToggle(frames.Main, "auto walk and interact with pl
         local signTool = equipSignTool()
         if signTool then
             fireSignTextUpdate()
+            startBoothPatrol()
         end
     else
+        stopBoothPatrol()
         local signTool = getSignToolFromBackpack()
         local char = LocalPlayer.Character
         local humanoid = char and char:FindFirstChildOfClass("Humanoid")
         if humanoid then
             pcall(function() humanoid:UnequipTools() end)
         end
-        if signTool and signTool.Parent ~= LocalPlayer.Backpack then
+        if signTool and LocalPlayer.Backpack and signTool.Parent ~= LocalPlayer.Backpack then
             signTool.Parent = LocalPlayer.Backpack
         end
     end
@@ -1464,6 +1467,131 @@ end)
 saveSignTextBtn.Size = UDim2.new(0.95, 0, 0, 32)
 saveSignTextBtn.TextSize = 13
 
+local boothPatrolThread = nil
+local boothPatrolRunning = false
+
+local function getOwnedBoothModel()
+    local stands = workspace:FindFirstChild("Stands")
+    if not stands then
+        return nil
+    end
+
+    for _, model in ipairs(stands:GetChildren()) do
+        if model:IsA("Model") and model.Name == "Basic Booth" then
+            local usernameVal = model:FindFirstChild("Username") or model:FindFirstChild("username")
+            if usernameVal and usernameVal:IsA("StringValue") then
+                local ownerName = tostring(usernameVal.Value or "")
+                if string.lower(ownerName) == string.lower(LocalPlayer.Name) then
+                    return model
+                end
+            end
+        end
+    end
+
+    return nil
+end
+
+local function getBoothPatrolTargets(model)
+    local anchorPart = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart")
+    if not anchorPart then
+        return {}
+    end
+
+    local boothCFrame, boothSize = model:GetBoundingBox()
+    local front = boothCFrame.LookVector
+    local right = boothCFrame.RightVector
+    local base = anchorPart.Position
+    local depth = math.max(boothSize.Z, 10)
+    local width = math.max(boothSize.X, 8)
+
+    return {
+        base + front * (depth / 2 + 6),
+        base + front * (depth / 2 + 8) + right * (width / 2 + 3),
+        base + front * (depth / 2 + 8) + right * -(width / 2 + 3),
+        base + front * (depth / 2 + 5),
+    }
+end
+
+local function moveCharacterToWaypoint(targetPos)
+    local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    local humanoid = char and char:FindFirstChildOfClass("Humanoid")
+    if not hrp or not humanoid then
+        return false
+    end
+
+    humanoid.WalkSpeed = 21
+    local path = PathfindingService:CreatePath({
+        AgentRadius = 3,
+        AgentHeight = 5,
+        AgentCanJump = true,
+        WaypointSpacing = 4,
+    })
+
+    local pathStatus = path:ComputeAsync(hrp.Position, targetPos)
+    if pathStatus ~= Enum.PathStatus.Success then
+        humanoid:MoveTo(targetPos)
+        return false
+    end
+
+    local waypoints = path:GetWaypoints()
+    for _, waypoint in ipairs(waypoints) do
+        if waypoint.Action == Enum.PathWaypointAction.Jump then
+            humanoid.Jump = true
+        end
+        humanoid:MoveTo(waypoint.Position)
+        local reached = humanoid.MoveToFinished:Wait()
+        if not reached then
+            break
+        end
+    end
+    return true
+end
+
+local function startBoothPatrol()
+    if boothPatrolRunning then
+        return
+    end
+
+    boothPatrolRunning = true
+    boothPatrolThread = task.spawn(function()
+        local patrolIndex = 0
+        while SETTINGS.autoWalkAndInteract do
+            local signTool = equipSignTool()
+            if signTool then
+                local booth = getOwnedBoothModel()
+                if booth then
+                    local patrolTargets = getBoothPatrolTargets(booth)
+                    if #patrolTargets > 0 then
+                        patrolIndex = patrolIndex % #patrolTargets + 1
+                        moveCharacterToWaypoint(patrolTargets[patrolIndex])
+                    end
+                else
+                    local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+                    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+                    if hrp then
+                        moveCharacterToWaypoint(hrp.Position + Vector3.new(4, 0, 0))
+                    end
+                end
+            end
+            task.wait(1.5)
+        end
+
+        boothPatrolRunning = false
+        boothPatrolThread = nil
+    end)
+end
+
+local function stopBoothPatrol()
+    if boothPatrolThread then
+        pcall(function()
+            task.cancel(boothPatrolThread)
+        end)
+        boothPatrolThread = nil
+    end
+    boothPatrolRunning = false
+end
+
 local function bindSignEquipOnRespawn()
     if not SETTINGS.autoWalkAndInteract then
         return
@@ -1471,6 +1599,7 @@ local function bindSignEquipOnRespawn()
     local signTool = equipSignTool()
     if signTool then
         fireSignTextUpdate()
+        startBoothPatrol()
     end
 end
 
