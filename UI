@@ -1684,6 +1684,19 @@ local function burstJumpAroundCrowd()
     end
 end
 
+local function isPositionInPlazaArea(pos)
+    if typeof(pos) ~= "Vector3" then
+        return false
+    end
+
+    return pos.X >= PLAZA_AREA_MIN.X
+        and pos.X <= PLAZA_AREA_MAX.X
+        and pos.Y >= PLAZA_AREA_MIN.Y
+        and pos.Y <= PLAZA_AREA_MAX.Y
+        and pos.Z >= PLAZA_AREA_MIN.Z
+        and pos.Z <= PLAZA_AREA_MAX.Z
+end
+
 local function getActivePlayers(maxDistance)
     local active = {}
     local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
@@ -1697,11 +1710,12 @@ local function getActivePlayers(maxDistance)
         if player ~= LocalPlayer and player.Character then
             local playerHRP = player.Character:FindFirstChild("HumanoidRootPart")
             if playerHRP then
-                local dist = (playerHRP.Position - hrp.Position).Magnitude
-                if dist <= limit then
+                local playerPos = playerHRP.Position
+                local dist = (playerPos - hrp.Position).Magnitude
+                if isPositionInPlazaArea(playerPos) and dist <= limit then
                     table.insert(active, {
                         player = player,
-                        position = playerHRP.Position,
+                        position = playerPos,
                         distance = dist,
                     })
                 end
@@ -1772,15 +1786,16 @@ local function startBoothPatrol()
     boothPatrolRunning = true
     boothPatrolThread = task.spawn(function()
         local patrolIndex = 0
-        local crowdHoldUntil = 0
+        local crowdFollowUntil = 0
         local crowdTriggered = false
         local lookCooldown = 0
         local jumpCooldown = 0
         local idlePauseUntil = 0
         local longIdleUntil = 0
-        local lastCrowdTarget = nil
         local lastLookedPlayer = nil
         local cheerCooldown = 0
+        local crowdFocusPlayer = nil
+        local crowdApproachTarget = nil
 
         while SETTINGS.autoWalkAndInteract do
             local now = os.clock()
@@ -1791,28 +1806,29 @@ local function startBoothPatrol()
             if crowdCount >= 4 then
                 if not crowdTriggered then
                     crowdTriggered = true
-                    crowdHoldUntil = now + math.random(5, 8)
-                    lookCooldown = now + math.random(2, 5)
-                    jumpCooldown = now + math.random(4, 8)
-                    cheerCooldown = now + math.random(10, 15)
+                    crowdFollowUntil = now + 80
+                    lookCooldown = now + 1
+                    jumpCooldown = now + 6
+                    cheerCooldown = now + 15
+                    crowdFocusPlayer = nearestPlayer
+                    crowdApproachTarget = getCrowdCenter(activePlayers)
                     performCrowdEmote("wave")
                 end
 
-                if now < crowdHoldUntil then
-                    local crowdTarget = getVariedCrowdTarget(activePlayers, lastCrowdTarget)
+                if now < crowdFollowUntil then
+                    local crowdTarget = crowdApproachTarget or getCrowdCenter(activePlayers)
                     if crowdTarget then
                         moveCharacterToWaypoint(crowdTarget, 24)
-                        lastCrowdTarget = crowdTarget
                     end
 
-                    if nearestPlayer and nearestPlayer ~= lastLookedPlayer and activePlayers[1] and activePlayers[1].distance > 8 and now >= lookCooldown then
+                    if nearestPlayer and nearestPlayer ~= lastLookedPlayer and now >= lookCooldown then
                         quickLookAtPlayer(nearestPlayer)
                         lastLookedPlayer = nearestPlayer
                         lookCooldown = now + math.random(12, 20)
-                    elseif nearestPlayer and nearestPlayer ~= lastLookedPlayer and math.random() < 0.3 and now >= lookCooldown then
-                        quickLookAtPlayer(nearestPlayer)
-                        lastLookedPlayer = nearestPlayer
-                        lookCooldown = now + math.random(12, 20)
+                    end
+
+                    if crowdFocusPlayer and nearestPlayer and nearestPlayer ~= crowdFocusPlayer then
+                        crowdFocusPlayer = nearestPlayer
                     end
 
                     if now >= jumpCooldown then
@@ -1833,13 +1849,15 @@ local function startBoothPatrol()
                         end
                     end
                     crowdTriggered = false
-                    crowdHoldUntil = 0
-                    lastCrowdTarget = nil
+                    crowdFollowUntil = 0
+                    crowdFocusPlayer = nil
+                    crowdApproachTarget = nil
                 end
             else
                 crowdTriggered = false
-                crowdHoldUntil = 0
-                lastCrowdTarget = nil
+                crowdFollowUntil = 0
+                crowdFocusPlayer = nil
+                crowdApproachTarget = nil
                 lastLookedPlayer = nil
                 cheerCooldown = 0
 
