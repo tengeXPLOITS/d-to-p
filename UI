@@ -1606,6 +1606,7 @@ local function moveCharacterToWaypoint(targetPos, speedOverride)
         local direction = (targetPos - hrp.Position)
         if direction.Magnitude > 0 then
             humanoid:MoveTo(hrp.Position + direction.Unit * math.min(direction.Magnitude, 8))
+            task.wait(0.25)
         end
         return false
     end
@@ -1620,10 +1621,7 @@ local function moveCharacterToWaypoint(targetPos, speedOverride)
         local distance = (waypointTarget - hrp.Position).Magnitude
         if distance > 0 and distance < 200 then
             humanoid:MoveTo(waypointTarget)
-            local reached = humanoid.MoveToFinished:Wait()
-            if not reached then
-                break
-            end
+            task.wait(0.35)
         end
     end
     return true
