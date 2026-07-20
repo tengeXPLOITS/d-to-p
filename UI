@@ -1452,12 +1452,12 @@ end
 
 local signTextFired = false
 
-local function fireSignTextUpdate()
+local function fireSignTextUpdate(force)
     if not SETTINGS.autoWalkAndInteract then
         return
     end
 
-    if signTextFired then
+    if not force and signTextFired then
         return
     end
 
@@ -1482,6 +1482,8 @@ local saveSignTextBtn = addButton(frames.Main, "Save Sign Text", function()
     SETTINGS.signText = text
     pcall(saveSettings)
     signTextBox.Text = text
+    signTextFired = false
+    fireSignTextUpdate(true)
     showNotification("Sign text saved")
 end)
 saveSignTextBtn.Size = UDim2.new(0.95, 0, 0, 32)
@@ -1533,7 +1535,20 @@ local function getBoothPatrolTargets(model)
     }
 end
 
-local function moveCharacterToWaypoint(targetPos)
+local function getBoothReturnTarget(model)
+    local anchorPart = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart")
+    if not anchorPart then
+        return nil
+    end
+
+    local boothCFrame, boothSize = model:GetBoundingBox()
+    local front = boothCFrame.LookVector
+    local base = anchorPart.Position
+    local depth = math.max(boothSize.Z, 10)
+    return base - front * (depth / 2 + 6)
+end
+
+local function moveCharacterToWaypoint(targetPos, speedOverride)
     local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     local humanoid = char and char:FindFirstChildOfClass("Humanoid")
@@ -1541,7 +1556,8 @@ local function moveCharacterToWaypoint(targetPos)
         return false
     end
 
-    humanoid.WalkSpeed = 21
+    local targetSpeed = tonumber(speedOverride) or 21
+    humanoid.WalkSpeed = targetSpeed
     local path = PathfindingService:CreatePath({
         AgentRadius = 3,
         AgentHeight = 5,
@@ -1569,7 +1585,7 @@ local function moveCharacterToWaypoint(targetPos)
     return true
 end
 
-local function stareAtPlayer(player)
+local function quickLookAtPlayer(player)
     local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     local humanoid = char and char:FindFirstChildOfClass("Humanoid")
@@ -1584,8 +1600,6 @@ local function stareAtPlayer(player)
     end
 
     local originalAutoRotate = humanoid.AutoRotate
-    local originalWalkSpeed = humanoid.WalkSpeed
-    local stareDuration = math.random(5, 19)
     local targetLook = playerHRP.Position + Vector3.new(0, 1.2, 0)
     local startLook = hrp.CFrame.LookVector
     local endLook = (targetLook - hrp.Position).Unit
@@ -1593,57 +1607,77 @@ local function stareAtPlayer(player)
 
     pcall(function()
         humanoid.AutoRotate = false
-        humanoid.WalkSpeed = 0
     end)
 
-    for i = 1, 12 do
-        local alpha = i / 12
+    for i = 1, 4 do
+        local alpha = i / 4
         local smoothLook = startLook:Lerp(endLook, alpha)
         hrp.CFrame = CFrame.lookAt(startPos, startPos + smoothLook)
-        task.wait(0.03)
+        task.wait(0.02)
     end
 
-    local holdUntil = os.clock() + stareDuration
-    while os.clock() < holdUntil do
-        hrp.CFrame = CFrame.lookAt(startPos, targetLook)
-        task.wait(0.05)
-    end
-
-    local jumpCount = math.random(8, 15)
-    for _ = 1, jumpCount do
-        humanoid.Jump = true
-        task.wait(0.12)
-    end
+    hrp.CFrame = CFrame.lookAt(startPos, targetLook)
 
     pcall(function()
         humanoid.AutoRotate = originalAutoRotate
-        humanoid.WalkSpeed = originalWalkSpeed
     end)
 end
 
-local function getNearestApproachingPlayer()
+local function burstJumpAroundCrowd()
     local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
-    local hrp = char and char:FindFirstChild("HumanoidRootPart")
-    if not hrp then
-        return nil
+    local humanoid = char and char:FindFirstChildOfClass("Humanoid")
+    if not humanoid then
+        return
     end
 
-    local nearestPlayer = nil
-    local nearestDist = math.huge
+    local jumpCount = math.random(2, 6)
+    for _ = 1, jumpCount do
+        humanoid.Jump = true
+        task.wait(0.22)
+    end
+end
+
+local function getActivePlayers()
+    local active = {}
     for _, player in ipairs(Players:GetPlayers()) do
         if player ~= LocalPlayer and player.Character then
             local playerHRP = player.Character:FindFirstChild("HumanoidRootPart")
             if playerHRP then
-                local dist = (playerHRP.Position - hrp.Position).Magnitude
-                if dist < 14 and dist < nearestDist then
-                    nearestDist = dist
-                    nearestPlayer = player
-                end
+                table.insert(active, {
+                    player = player,
+                    position = playerHRP.Position,
+                })
             end
         end
     end
 
-    return nearestPlayer
+    table.sort(active, function(a, b)
+        return a.player and b.player and tostring(a.player.Name) < tostring(b.player.Name)
+    end)
+
+    return active
+end
+
+local function getCrowdCenter(activePlayers)
+    if #activePlayers == 0 then
+        return nil
+    end
+
+    local total = Vector3.new(0, 0, 0)
+    for _, entry in ipairs(activePlayers) do
+        total += entry.position
+    end
+
+    return total / #activePlayers
+end
+
+local function getNearestApproachingPlayer()
+    local activePlayers = getActivePlayers()
+    if #activePlayers == 0 then
+        return nil
+    end
+
+    return activePlayers[1].player
 end
 
 local function startBoothPatrol()
@@ -1654,45 +1688,84 @@ local function startBoothPatrol()
     boothPatrolRunning = true
     boothPatrolThread = task.spawn(function()
         local patrolIndex = 0
-        local stareCooldown = math.random(240, 360)
-        local nearbyHoldTimer = 0
+        local crowdHoldUntil = 0
+        local crowdTriggered = false
+        local lookCooldown = 0
+        local jumpCooldown = 0
+        local idlePauseUntil = 0
 
         while SETTINGS.autoWalkAndInteract do
-            local approachingPlayer = getNearestApproachingPlayer()
-            if approachingPlayer then
-                nearbyHoldTimer = nearbyHoldTimer + 1.5
-                if nearbyHoldTimer >= 20 then
-                    stareAtPlayer(approachingPlayer)
-                    nearbyHoldTimer = 0
-                    stareCooldown = math.random(240, 360)
-                end
-            else
-                nearbyHoldTimer = 0
-                stareCooldown = math.max(stareCooldown - 1.5, 0)
-            end
+            local now = os.clock()
+            local activePlayers = getActivePlayers()
+            local crowdCount = #activePlayers
+            local nearestPlayer = crowdCount > 0 and activePlayers[1].player or nil
 
-            if not approachingPlayer and stareCooldown <= 0 then
-                local fallbackPlayer = getNearestApproachingPlayer()
-                if fallbackPlayer then
-                    stareAtPlayer(fallbackPlayer)
-                    stareCooldown = math.random(240, 360)
+            if crowdCount >= 5 then
+                if not crowdTriggered then
+                    crowdTriggered = true
+                    crowdHoldUntil = now + math.random(45, 75)
+                    lookCooldown = now + math.random(2, 5)
+                    jumpCooldown = now + math.random(4, 8)
                 end
-            end
 
-            local signTool = equipSignTool()
-            if signTool then
-                local booth = getOwnedBoothModel()
-                if booth then
-                    local patrolTargets = getBoothPatrolTargets(booth)
-                    if #patrolTargets > 0 then
-                        patrolIndex = patrolIndex % #patrolTargets + 1
-                        moveCharacterToWaypoint(patrolTargets[patrolIndex])
+                if now < crowdHoldUntil then
+                    local crowdCenter = getCrowdCenter(activePlayers)
+                    if crowdCenter then
+                        local offset = Vector3.new(math.random(-3, 3), 0, math.random(-3, 3))
+                        moveCharacterToWaypoint(crowdCenter + offset, 24)
+                    end
+
+                    if now >= lookCooldown then
+                        quickLookAtPlayer(nearestPlayer)
+                        lookCooldown = now + math.random(4, 8)
+                    end
+
+                    if now >= jumpCooldown then
+                        burstJumpAroundCrowd()
+                        jumpCooldown = now + math.random(6, 10)
                     end
                 else
-                    local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
-                    local hrp = char and char:FindFirstChild("HumanoidRootPart")
-                    if hrp then
-                        moveCharacterToWaypoint(hrp.Position + Vector3.new(4, 0, 0))
+                    local booth = getOwnedBoothModel()
+                    if booth then
+                        local returnTarget = getBoothReturnTarget(booth)
+                        if returnTarget then
+                            moveCharacterToWaypoint(returnTarget, 24)
+                        end
+                    end
+                    crowdTriggered = false
+                    crowdHoldUntil = 0
+                end
+            else
+                crowdTriggered = false
+                crowdHoldUntil = 0
+
+                if nearestPlayer and now >= lookCooldown then
+                    quickLookAtPlayer(nearestPlayer)
+                    lookCooldown = now + math.random(6, 12)
+                end
+
+                if now < idlePauseUntil then
+                    task.wait(0.75)
+                else
+                    local signTool = equipSignTool()
+                    if signTool then
+                        local booth = getOwnedBoothModel()
+                        if booth then
+                            local patrolTargets = getBoothPatrolTargets(booth)
+                            if #patrolTargets > 0 then
+                                patrolIndex = patrolIndex % #patrolTargets + 1
+                                moveCharacterToWaypoint(patrolTargets[patrolIndex], 21)
+                            end
+                        else
+                            local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+                            local hrp = char and char:FindFirstChild("HumanoidRootPart")
+                            if hrp then
+                                moveCharacterToWaypoint(hrp.Position + Vector3.new(4, 0, 0), 21)
+                            end
+                        end
+                        if math.random() < 0.35 then
+                            idlePauseUntil = now + math.random(0.75, 2)
+                        end
                     end
                 end
             end
