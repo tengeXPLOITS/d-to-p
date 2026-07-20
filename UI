@@ -1715,6 +1715,7 @@ local function startBoothPatrol()
         local lookCooldown = 0
         local jumpCooldown = 0
         local idlePauseUntil = 0
+        local longIdleUntil = 0
 
         while SETTINGS.autoWalkAndInteract do
             local now = os.clock()
@@ -1767,7 +1768,9 @@ local function startBoothPatrol()
                     lookCooldown = now + math.random(6, 12)
                 end
 
-                if now < idlePauseUntil then
+                if now < longIdleUntil then
+                    task.wait(0.75)
+                elseif now < idlePauseUntil then
                     task.wait(0.75)
                 else
                     local signTool = equipSignTool()
@@ -1786,7 +1789,10 @@ local function startBoothPatrol()
                                 moveCharacterToWaypoint(hrp.Position + Vector3.new(4, 0, 0), 21)
                             end
                         end
-                        if math.random() < 0.2 then
+
+                        if math.random() < 0.1 then
+                            longIdleUntil = now + math.random(420, 600)
+                        elseif math.random() < 0.2 then
                             idlePauseUntil = now + math.random(0.75, 2)
                         end
                     end
