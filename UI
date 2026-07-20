@@ -1361,9 +1361,10 @@ local autoWalkToggle, _ = addToggle(frames.Main, "auto walk and interact with pl
     SETTINGS.autoWalkAndInteract = b and true or false
     pcall(saveSettings)
     if SETTINGS.autoWalkAndInteract then
-        startAutoWalkSignLoop()
-    else
-        stopAutoWalkSignLoop()
+        local signTool = equipSignTool()
+        if signTool then
+            fireSignTextUpdate()
+        end
     end
 end)
 autoWalkToggle:Set(SETTINGS.autoWalkAndInteract)
@@ -1378,8 +1379,6 @@ local signTextBox = addTextBox(frames.Main, "Type sign text here...", function(v
 end)
 signTextBox.Text = tostring(SETTINGS.signText or "saving up for a new skin, any amount helps!")
 
-local autoWalkSignLoop = nil
-local signToolLoopRunning = false
 local function getSignToolFromBackpack()
     local backpack = LocalPlayer:FindFirstChild("Backpack")
     if backpack then
@@ -1408,9 +1407,15 @@ local function equipSignTool()
         return nil
     end
 
-    local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+    local char = LocalPlayer.Character
+    local humanoid = char and char:FindFirstChildOfClass("Humanoid")
     if char and tool.Parent ~= char then
         tool.Parent = char
+        if humanoid then
+            pcall(function() humanoid:EquipTool(tool) end)
+        end
+    elseif humanoid then
+        pcall(function() humanoid:EquipTool(tool) end)
     end
 
     return tool
@@ -1433,33 +1438,41 @@ local function fireSignTextUpdate()
     end)
 end
 
-local function startAutoWalkSignLoop()
-    if signToolLoopRunning then
+local saveSignTextBtn = addButton(frames.Main, "Save Sign Text", function()
+    local text = tostring(signTextBox.Text or "")
+    if text == "" then
+        text = "saving up for a new skin, any amount helps!"
+    end
+    SETTINGS.signText = text
+    pcall(saveSettings)
+    signTextBox.Text = text
+    if SETTINGS.autoWalkAndInteract then
+        fireSignTextUpdate()
+    end
+    showNotification("Sign text saved")
+end)
+saveSignTextBtn.Size = UDim2.new(0.95, 0, 0, 32)
+saveSignTextBtn.TextSize = 13
+
+local function bindSignEquipOnRespawn()
+    if not SETTINGS.autoWalkAndInteract then
         return
     end
-    signToolLoopRunning = true
-    autoWalkSignLoop = task.spawn(function()
-        while SETTINGS.autoWalkAndInteract do
-            fireSignTextUpdate()
-            task.wait(0.35)
-        end
-        signToolLoopRunning = false
-        autoWalkSignLoop = nil
-    end)
+    local signTool = equipSignTool()
+    if signTool then
+        fireSignTextUpdate()
+    end
 end
 
-local function stopAutoWalkSignLoop()
-    if autoWalkSignLoop then
-        pcall(function()
-            task.cancel(autoWalkSignLoop)
-        end)
-        autoWalkSignLoop = nil
+LocalPlayer.CharacterAdded:Connect(function()
+    task.wait(0.25)
+    if SETTINGS.autoWalkAndInteract then
+        bindSignEquipOnRespawn()
     end
-    signToolLoopRunning = false
-end
+end)
 
 if SETTINGS.autoWalkAndInteract then
-    startAutoWalkSignLoop()
+    bindSignEquipOnRespawn()
 end
 
 -- Main tab: emote loop controls
