@@ -46,26 +46,41 @@ end
 
 local function findRaisedStat()
     local leaderstats = LocalPlayer:FindFirstChild("leaderstats")
-    if leaderstats then
-        local raised = leaderstats:FindFirstChild("Raised") or leaderstats:FindFirstChild("raised")
-        if raised and (raised:IsA("IntValue") or raised:IsA("NumberValue") or raised:IsA("StringValue")) then
-            return raised
+    if not leaderstats then
+        return ensureRaisedStat()
+    end
+
+    local function isRaiseStat(obj)
+        local rawName = tostring(obj and obj.Name or "")
+        local normalizedName = string.gsub(string.lower(rawName), "[^a-z]", "")
+        return obj and (obj:IsA("IntValue") or obj:IsA("NumberValue") or obj:IsA("StringValue")) and (
+            string.find(normalizedName, "ra", 1, true)
+            or string.find(normalizedName, "ro", 1, true)
+            or string.find(normalizedName, "don", 1, true)
+        )
+    end
+
+    for _, child in ipairs(leaderstats:GetChildren()) do
+        if isRaiseStat(child) then
+            return child
         end
     end
 
-    local function findStat(root)
+    local found = nil
+    local function crawl(root)
         for _, child in ipairs(root:GetChildren()) do
-            if (child.Name:lower() == "raised") and (child:IsA("IntValue") or child:IsA("NumberValue") or child:IsA("StringValue")) then
-                return child
+            if isRaiseStat(child) then
+                found = child
+                return true
+            end
+            if crawl(child) then
+                return true
             end
         end
-        for _, child in ipairs(root:GetChildren()) do
-            local found = findStat(child)
-            if found then return found end
-        end
-        return nil
+        return false
     end
-    return findStat(LocalPlayer)
+    crawl(LocalPlayer)
+    return found or ensureRaisedStat()
 end
 
 local function getCurrentRaisedValue()
@@ -103,7 +118,10 @@ local function getNearestDonorLabel()
 end
 
 local function startDonationRaisedWebhookWatcher()
-    local raised = ensureRaisedStat()
+    local raised = findRaisedStat() or ensureRaisedStat()
+    if not raised then
+        return
+    end
     local lastRaised = parseNumberValue(raised.Value) or 0
 
     if donationRaisedWebhookConn then
@@ -352,7 +370,8 @@ local SETTINGS = {
     webhookUrl = "",
     boothText = "Any donation brightens my day! ❤️",
     -- main
-    antiAfk = false,
+    antiAfk = true,
+    autoWalkAndInteract = false,
 }
 
 local SERVER_HOP_MIN_PLAYERS = 13
@@ -511,22 +530,14 @@ local function showNotification(text)
 end
 showNotification("✅ Okfean Community verified — Donate UI loaded")
 
-local function cleanupWorkspaceBancas()
-    local removed = 0
-    local descendants = workspace:GetDescendants()
-    for _, instance in ipairs(descendants) do
-        if instance:IsA("Model") and string.lower(instance.Name or "") == "bancas" then
-            pcall(function()
-                instance:Destroy()
-                removed = removed + 1
-            end)
+local function cleanupBenchModels()
+    for _, instance in ipairs(workspace:GetDescendants()) do
+        if instance:IsA("Model") and string.lower(instance.Name or "") == "bench" then
+            pcall(function() instance:Destroy() end)
         end
     end
-    if removed > 0 then
-        showNotification("Removed " .. tostring(removed) .. " workspace Banca model(s)")
-    end
 end
-cleanupWorkspaceBancas()
+cleanupBenchModels()
 
 task.spawn(function()
     task.wait(1)
@@ -1292,12 +1303,11 @@ tabs.server.MouseButton1Click:Connect(function() selectTab("Server") end)
 tabs.webhook.MouseButton1Click:Connect(function() selectTab("Webhook") end)
 
 -- Small Main and Server content placeholders
--- Main tab: Anti AFK toggle
--- anti-AFK implementation
+-- anti-AFK implementation automatically starts on UI execution
 local antiAfkConn = nil
 local function setAntiAfk(enabled)
-    SETTINGS.antiAfk = enabled
-    if enabled then
+    SETTINGS.antiAfk = enabled and true or false
+    if SETTINGS.antiAfk then
         if antiAfkConn then return end
         antiAfkConn = LocalPlayer.Idled:Connect(function()
             pcall(function()
@@ -1315,13 +1325,13 @@ local function setAntiAfk(enabled)
     end
     pcall(saveSettings)
 end
+setAntiAfk(true)
 
-local antiAfkToggle, _ = addToggle(frames.Main, "Anti AFK", SETTINGS.antiAfk, function(b)
-    setAntiAfk(b)
+local autoWalkToggle, _ = addToggle(frames.Main, "auto walk and interact with plrs (beta)", SETTINGS.autoWalkAndInteract, function(b)
+    SETTINGS.autoWalkAndInteract = b and true or false
+    pcall(saveSettings)
 end)
-setAntiAfk(SETTINGS.antiAfk)
--- ensure changes persist when toggled
-antiAfkToggle:Set(SETTINGS.antiAfk)
+autoWalkToggle:Set(SETTINGS.autoWalkAndInteract)
 
 -- Main tab: emote loop controls
 local danceTrack = nil
