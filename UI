@@ -125,6 +125,18 @@ local function stopDonationPaths()
     end
 end
 
+local function performCrowdEmote(emoteName)
+    local chatEvents = game:GetService("ReplicatedStorage"):FindFirstChild("DefaultChatSystemChatEvents")
+    local sayMessageRequest = chatEvents and chatEvents:FindFirstChild("SayMessageRequest")
+    if not sayMessageRequest or not sayMessageRequest:IsA("RemoteEvent") then
+        return
+    end
+
+    pcall(function()
+        sayMessageRequest:FireServer("/e " .. tostring(emoteName), "All")
+    end)
+end
+
 local function getExecutionKey()
     return tostring(LocalPlayer.UserId) .. ":" .. tostring(game.JobId)
 end
@@ -1638,7 +1650,7 @@ local function burstJumpAroundCrowd()
         return
     end
 
-    local jumpSequence = {1, 2, 3}
+    local jumpSequence = {2, 3}
     for _, jumpCount in ipairs(jumpSequence) do
         for _ = 1, jumpCount do
             humanoid.Jump = true
@@ -1693,6 +1705,32 @@ local function getCrowdCenter(activePlayers)
     return total / #activePlayers
 end
 
+local function getVariedCrowdTarget(activePlayers, lastCrowdTarget)
+    if #activePlayers == 0 then
+        return nil
+    end
+
+    local sampleCount = math.min(#activePlayers, 4)
+    local candidate = activePlayers[math.random(1, sampleCount)]
+    local target = candidate and candidate.position or nil
+    if not target then
+        return nil
+    end
+
+    if lastCrowdTarget then
+        local distance = (target - lastCrowdTarget).Magnitude
+        if distance < 6 then
+            local fallbackIndex = math.random(1, #activePlayers)
+            local fallback = activePlayers[fallbackIndex]
+            if fallback then
+                target = fallback.position
+            end
+        end
+    end
+
+    return target + Vector3.new(math.random(-2, 2), 0, math.random(-2, 2))
+end
+
 local function getNearestApproachingPlayer()
     local activePlayers = getActivePlayers(45)
     if #activePlayers == 0 then
@@ -1716,6 +1754,8 @@ local function startBoothPatrol()
         local jumpCooldown = 0
         local idlePauseUntil = 0
         local longIdleUntil = 0
+        local lastCrowdTarget = nil
+        local cheerCooldown = 0
 
         while SETTINGS.autoWalkAndInteract do
             local now = os.clock()
@@ -1726,17 +1766,18 @@ local function startBoothPatrol()
             if crowdCount >= 4 then
                 if not crowdTriggered then
                     crowdTriggered = true
-                    crowdHoldUntil = now + math.random(20, 45)
+                    crowdHoldUntil = now + math.random(80, 100)
                     lookCooldown = now + math.random(2, 5)
                     jumpCooldown = now + math.random(4, 8)
+                    cheerCooldown = now + math.random(10, 15)
+                    performCrowdEmote("wave")
                 end
 
                 if now < crowdHoldUntil then
-                    local crowdCenter = getCrowdCenter(activePlayers)
-                    if crowdCenter then
-                        local offset = Vector3.new(math.random(-2, 2), 0, math.random(-2, 2))
-                        local closeCrowdTarget = crowdCenter + offset
-                        moveCharacterToWaypoint(closeCrowdTarget, 24)
+                    local crowdTarget = getVariedCrowdTarget(activePlayers, lastCrowdTarget)
+                    if crowdTarget then
+                        moveCharacterToWaypoint(crowdTarget, 24)
+                        lastCrowdTarget = crowdTarget
                     end
 
                     if math.random() < 0.3 and now >= lookCooldown then
@@ -1748,6 +1789,11 @@ local function startBoothPatrol()
                         burstJumpAroundCrowd()
                         jumpCooldown = now + math.random(6, 10)
                     end
+
+                    if now >= cheerCooldown then
+                        performCrowdEmote("cheer")
+                        cheerCooldown = now + math.random(25, 40)
+                    end
                 else
                     local booth = getOwnedBoothModel()
                     if booth then
@@ -1758,10 +1804,13 @@ local function startBoothPatrol()
                     end
                     crowdTriggered = false
                     crowdHoldUntil = 0
+                    lastCrowdTarget = nil
                 end
             else
                 crowdTriggered = false
                 crowdHoldUntil = 0
+                lastCrowdTarget = nil
+                cheerCooldown = 0
 
                 if nearestPlayer and math.random() < 0.3 and now >= lookCooldown then
                     quickLookAtPlayer(nearestPlayer)
