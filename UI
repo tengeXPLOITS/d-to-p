@@ -1712,39 +1712,10 @@ local function moveCharacterToWaypoint(targetPos, speedOverride)
     end
 
     targetPos = clampTargetToPlazaArea(targetPos)
-
     local targetSpeed = tonumber(speedOverride) or 21
     humanoid.WalkSpeed = targetSpeed
-    local path = PathfindingService:CreatePath({
-        AgentRadius = 3,
-        AgentHeight = 5,
-        AgentCanJump = true,
-        WaypointSpacing = 4,
-    })
-
-    local pathStatus = path:ComputeAsync(hrp.Position, targetPos)
-    if pathStatus ~= Enum.PathStatus.Success then
-        local direction = (targetPos - hrp.Position)
-        if direction.Magnitude > 0 then
-            humanoid:MoveTo(targetPos)
-            task.wait(0.2)
-        end
-        return false
-    end
-
-    local waypoints = path:GetWaypoints()
-    for _, waypoint in ipairs(waypoints) do
-        if waypoint.Action == Enum.PathWaypointAction.Jump then
-            humanoid.Jump = true
-        end
-
-        local waypointTarget = clampTargetToPlazaArea(waypoint.Position)
-        local distance = (waypointTarget - hrp.Position).Magnitude
-        if distance > 0 and distance < 200 then
-            humanoid:MoveTo(waypointTarget)
-            task.wait(0.15)
-        end
-    end
+    humanoid:MoveTo(targetPos)
+    task.wait(0.35)
     return true
 end
 
@@ -1885,57 +1856,28 @@ local function startBoothPatrol()
     boothPatrolRunning = true
     boothPatrolThread = task.spawn(function()
         local patrolIndex = 0
-        local crowdFollowUntil = 0
         local crowdTriggered = false
+        local crowdTriggerAt = 0
+        local crowdFollowUntil = 0
         local lookCooldown = 0
         local jumpCooldown = 0
-        local idlePauseUntil = 0
-        local longIdleUntil = 0
-        local lastLookedPlayer = nil
         local cheerCooldown = 0
+        local lastLookedPlayer = nil
         local crowdApproachTarget = nil
-        local crowdPauseUntil = 0
-        local lastPosition = nil
-        local idleSince = nil
+        local lastMoveAt = os.clock()
 
         while SETTINGS.autoWalkAndInteract do
             local now = os.clock()
             local activePlayers = getActivePlayers(40)
             local crowdCount = #activePlayers
             local nearestPlayer = crowdCount > 0 and activePlayers[1].player or nil
-            local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
-            local hrp = char and char:FindFirstChild("HumanoidRootPart")
-
-            if hrp then
-                local currentPosition = hrp.Position
-                if lastPosition then
-                    local moved = (currentPosition - lastPosition).Magnitude
-                    if moved > 0.5 then
-                        idleSince = nil
-                    elseif idleSince == nil then
-                        idleSince = now
-                    elseif now - idleSince >= 20 then
-                        local booth = getOwnedBoothModel()
-                        if booth then
-                            local returnTarget = getBoothReturnTarget(booth)
-                            if returnTarget then
-                                moveCharacterToWaypoint(returnTarget, 24)
-                                faceAwayFromBooth(booth)
-                            end
-                        end
-                        idleSince = now
-                    end
-                else
-                    lastPosition = currentPosition
-                end
-                lastPosition = currentPosition
-            end
+            local booth = getOwnedBoothModel()
 
             if crowdCount >= 4 then
                 if not crowdTriggered then
                     crowdTriggered = true
+                    crowdTriggerAt = now
                     crowdFollowUntil = now + 80
-                    crowdPauseUntil = now + 3
                     lookCooldown = now + 1
                     jumpCooldown = now + 6
                     cheerCooldown = now + 15
@@ -1944,67 +1886,48 @@ local function startBoothPatrol()
                 end
 
                 if now < crowdFollowUntil then
-                    if now < crowdPauseUntil then
-                        local crowdTarget = crowdApproachTarget or getCrowdCenter(activePlayers)
-                        if crowdTarget then
-                            moveCharacterToWaypoint(crowdTarget, 24)
-                        end
+                    local crowdTarget = crowdApproachTarget or getCrowdCenter(activePlayers)
+                    if crowdTarget then
+                        moveCharacterToWaypoint(crowdTarget, 24)
+                        lastMoveAt = now
+                    end
 
-                        if nearestPlayer and nearestPlayer ~= lastLookedPlayer and now >= lookCooldown then
-                            quickLookAtPlayer(nearestPlayer)
-                            lastLookedPlayer = nearestPlayer
-                            lookCooldown = now + math.random(12, 20)
-                        end
-                    else
-                        local booth = getOwnedBoothModel()
-                        if booth then
-                            local currentChar = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
-                            local currentHRP = currentChar and currentChar:FindFirstChild("HumanoidRootPart")
-                            local crowdCenter = crowdApproachTarget or getCrowdCenter(activePlayers)
-                            if currentHRP and crowdCenter then
-                                local retreatDirection = (currentHRP.Position - crowdCenter)
-                                retreatDirection = Vector3.new(retreatDirection.X, 0, retreatDirection.Z)
-                                if retreatDirection.Magnitude < 1 then
-                                    retreatDirection = Vector3.new(math.random(-1, 1), 0, math.random(-1, 1))
-                                end
+                    if nearestPlayer and nearestPlayer ~= lastLookedPlayer and now >= lookCooldown then
+                        quickLookAtPlayer(nearestPlayer)
+                        lastLookedPlayer = nearestPlayer
+                        lookCooldown = now + math.random(12, 20)
+                    end
 
-                                local retreatTarget = currentHRP.Position + retreatDirection.Unit * math.random(12, 18)
-                                moveCharacterToWaypoint(retreatTarget, 24)
-                            end
-                        end
+                    if now >= jumpCooldown then
+                        burstJumpAroundCrowd()
+                        jumpCooldown = now + math.random(6, 10)
+                    end
 
-                        if now >= jumpCooldown then
-                            burstJumpAroundCrowd()
-                            jumpCooldown = now + math.random(6, 10)
-                        end
-
-                        if now >= cheerCooldown then
-                            performCrowdEmote("cheer")
-                            cheerCooldown = now + math.random(25, 40)
-                        end
+                    if now >= cheerCooldown then
+                        performCrowdEmote("cheer")
+                        cheerCooldown = now + math.random(25, 40)
                     end
                 else
-                    local booth = getOwnedBoothModel()
                     if booth then
                         local returnTarget = getBoothReturnTarget(booth)
                         if returnTarget then
                             moveCharacterToWaypoint(returnTarget, 24)
-                            faceBooth(booth)
+                            faceAwayFromBooth(booth)
+                            lastMoveAt = now
                         end
                     end
                     crowdTriggered = false
                     crowdFollowUntil = 0
-                    crowdPauseUntil = 0
                     crowdApproachTarget = nil
+                    lastLookedPlayer = nil
+                    cheerCooldown = 0
                 end
             else
                 crowdTriggered = false
                 crowdFollowUntil = 0
-                crowdPauseUntil = 0
                 crowdApproachTarget = nil
                 lastLookedPlayer = nil
                 cheerCooldown = 0
-                idleSince = nil
 
                 if nearestPlayer and nearestPlayer ~= lastLookedPlayer and math.random() < 0.2 and now >= lookCooldown then
                     quickLookAtPlayer(nearestPlayer)
@@ -2012,35 +1935,26 @@ local function startBoothPatrol()
                     lookCooldown = now + math.random(12, 20)
                 end
 
-                if now < longIdleUntil then
-                    task.wait(0.75)
-                elseif now < idlePauseUntil then
-                    task.wait(0.75)
-                else
-                    local booth = getOwnedBoothModel()
+                if now - lastMoveAt >= 20 then
                     if booth then
-                        local patrolTargets = getBoothPatrolTargets(booth)
-                        if #patrolTargets > 0 then
-                            patrolIndex = patrolIndex % #patrolTargets + 1
-                            moveCharacterToWaypoint(patrolTargets[patrolIndex], 21)
-                        end
-                    else
-                        local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
-                        local hrp = char and char:FindFirstChild("HumanoidRootPart")
-                        if hrp then
-                            moveCharacterToWaypoint(hrp.Position + Vector3.new(4, 0, 0), 21)
+                        local returnTarget = getBoothReturnTarget(booth)
+                        if returnTarget then
+                            moveCharacterToWaypoint(returnTarget, 24)
+                            faceAwayFromBooth(booth)
+                            lastMoveAt = now
                         end
                     end
-
-                    if math.random() < 0.1 then
-                        longIdleUntil = now + math.random(420, 600)
-                    elseif math.random() < 0.2 then
-                        idlePauseUntil = now + math.random(0.75, 2)
+                else
+                    local patrolTargets = booth and getBoothPatrolTargets(booth) or {}
+                    if #patrolTargets > 0 then
+                        patrolIndex = patrolIndex % #patrolTargets + 1
+                        moveCharacterToWaypoint(patrolTargets[patrolIndex], 21)
+                        lastMoveAt = now
                     end
                 end
             end
 
-            task.wait(1.5)
+            task.wait(1.0)
         end
 
         boothPatrolRunning = false
