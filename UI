@@ -703,7 +703,9 @@ local function showFirstTimeDisclaimer()
     end)
 end
 
-showFirstTimeDisclaimer()
+if isfile and not isfile(SETTINGS_FILE) then
+    showFirstTimeDisclaimer()
+end
 
 local function cleanupBenchModels()
     for _, instance in ipairs(workspace:GetDescendants()) do
@@ -1763,6 +1765,23 @@ local function faceBooth(model)
     hrp.CFrame = CFrame.lookAt(hrp.Position, hrp.Position + lookVector.Unit)
 end
 
+local function faceAwayFromBooth(model)
+    local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp or not model then
+        return
+    end
+
+    local boothCFrame = model:GetBoundingBox()
+    local boothLook = boothCFrame.LookVector
+    local lookVector = Vector3.new(-boothLook.X, 0, -boothLook.Z)
+    if lookVector.Magnitude <= 0 then
+        lookVector = Vector3.new(0, 0, 1)
+    end
+
+    hrp.CFrame = CFrame.lookAt(hrp.Position, hrp.Position + lookVector.Unit)
+end
+
 local function quickLookAtPlayer(player)
     local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
@@ -1793,13 +1812,9 @@ local function burstJumpAroundCrowd()
         return
     end
 
-    local jumpSequence = {2, 3}
-    for _, jumpCount in ipairs(jumpSequence) do
-        for _ = 1, jumpCount do
-            humanoid.Jump = true
-            task.wait(0.16)
-        end
-        task.wait(0.2)
+    for _ = 1, 3 do
+        humanoid.Jump = true
+        task.wait(0.16)
     end
 end
 
@@ -1862,41 +1877,6 @@ local function getCrowdCenter(activePlayers)
     return total / #activePlayers
 end
 
-local function getVariedCrowdTarget(activePlayers, lastCrowdTarget)
-    if #activePlayers == 0 then
-        return nil
-    end
-
-    local sampleCount = math.min(#activePlayers, 4)
-    local candidate = activePlayers[math.random(1, sampleCount)]
-    local target = candidate and candidate.position or nil
-    if not target then
-        return nil
-    end
-
-    if lastCrowdTarget then
-        local distance = (target - lastCrowdTarget).Magnitude
-        if distance < 6 then
-            local fallbackIndex = math.random(1, #activePlayers)
-            local fallback = activePlayers[fallbackIndex]
-            if fallback then
-                target = fallback.position
-            end
-        end
-    end
-
-    return target + Vector3.new(math.random(-2, 2), 0, math.random(-2, 2))
-end
-
-local function getNearestApproachingPlayer()
-    local activePlayers = getActivePlayers(40)
-    if #activePlayers == 0 then
-        return nil
-    end
-
-    return activePlayers[1].player
-end
-
 local function startBoothPatrol()
     if boothPatrolRunning then
         return
@@ -1913,15 +1893,43 @@ local function startBoothPatrol()
         local longIdleUntil = 0
         local lastLookedPlayer = nil
         local cheerCooldown = 0
-        local crowdFocusPlayer = nil
         local crowdApproachTarget = nil
         local crowdPauseUntil = 0
+        local lastPosition = nil
+        local idleSince = nil
 
         while SETTINGS.autoWalkAndInteract do
             local now = os.clock()
             local activePlayers = getActivePlayers(40)
             local crowdCount = #activePlayers
             local nearestPlayer = crowdCount > 0 and activePlayers[1].player or nil
+            local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+            local hrp = char and char:FindFirstChild("HumanoidRootPart")
+
+            if hrp then
+                local currentPosition = hrp.Position
+                if lastPosition then
+                    local moved = (currentPosition - lastPosition).Magnitude
+                    if moved > 0.5 then
+                        idleSince = nil
+                    elseif idleSince == nil then
+                        idleSince = now
+                    elseif now - idleSince >= 20 then
+                        local booth = getOwnedBoothModel()
+                        if booth then
+                            local returnTarget = getBoothReturnTarget(booth)
+                            if returnTarget then
+                                moveCharacterToWaypoint(returnTarget, 24)
+                                faceAwayFromBooth(booth)
+                            end
+                        end
+                        idleSince = now
+                    end
+                else
+                    lastPosition = currentPosition
+                end
+                lastPosition = currentPosition
+            end
 
             if crowdCount >= 4 then
                 if not crowdTriggered then
@@ -1931,7 +1939,6 @@ local function startBoothPatrol()
                     lookCooldown = now + 1
                     jumpCooldown = now + 6
                     cheerCooldown = now + 15
-                    crowdFocusPlayer = nearestPlayer
                     crowdApproachTarget = getCrowdCenter(activePlayers)
                     performCrowdEmote("wave")
                 end
@@ -1988,19 +1995,18 @@ local function startBoothPatrol()
                     crowdTriggered = false
                     crowdFollowUntil = 0
                     crowdPauseUntil = 0
-                    crowdFocusPlayer = nil
                     crowdApproachTarget = nil
                 end
             else
                 crowdTriggered = false
                 crowdFollowUntil = 0
                 crowdPauseUntil = 0
-                crowdFocusPlayer = nil
                 crowdApproachTarget = nil
                 lastLookedPlayer = nil
                 cheerCooldown = 0
+                idleSince = nil
 
-                if nearestPlayer and nearestPlayer ~= lastLookedPlayer and math.random() < 0.3 and now >= lookCooldown then
+                if nearestPlayer and nearestPlayer ~= lastLookedPlayer and math.random() < 0.2 and now >= lookCooldown then
                     quickLookAtPlayer(nearestPlayer)
                     lastLookedPlayer = nearestPlayer
                     lookCooldown = now + math.random(12, 20)
