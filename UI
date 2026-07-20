@@ -1584,6 +1584,21 @@ local function getBoothReturnTarget(model)
     return base - front * (depth / 2 + 6)
 end
 
+local PLAZA_AREA_MIN = Vector3.new(-25.709, 6.297, -40.785)
+local PLAZA_AREA_MAX = Vector3.new(82.860, 6.751, 66.287)
+
+local function clampTargetToPlazaArea(targetPos)
+    if typeof(targetPos) ~= "Vector3" then
+        return targetPos
+    end
+
+    return Vector3.new(
+        math.clamp(targetPos.X, PLAZA_AREA_MIN.X, PLAZA_AREA_MAX.X),
+        math.clamp(targetPos.Y, PLAZA_AREA_MIN.Y, PLAZA_AREA_MAX.Y),
+        math.clamp(targetPos.Z, PLAZA_AREA_MIN.Z, PLAZA_AREA_MAX.Z)
+    )
+end
+
 local function moveCharacterToWaypoint(targetPos, speedOverride)
     local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
@@ -1591,6 +1606,8 @@ local function moveCharacterToWaypoint(targetPos, speedOverride)
     if not hrp or not humanoid then
         return false
     end
+
+    targetPos = clampTargetToPlazaArea(targetPos)
 
     local targetSpeed = tonumber(speedOverride) or 21
     humanoid.WalkSpeed = targetSpeed
@@ -1617,7 +1634,7 @@ local function moveCharacterToWaypoint(targetPos, speedOverride)
             humanoid.Jump = true
         end
 
-        local waypointTarget = waypoint.Position
+        local waypointTarget = clampTargetToPlazaArea(waypoint.Position)
         local distance = (waypointTarget - hrp.Position).Magnitude
         if distance > 0 and distance < 200 then
             humanoid:MoveTo(waypointTarget)
@@ -1675,7 +1692,7 @@ local function getActivePlayers(maxDistance)
         return active
     end
 
-    local limit = math.max(1, tonumber(maxDistance) or 45)
+    local limit = math.max(1, tonumber(maxDistance) or 40)
     for _, player in ipairs(Players:GetPlayers()) do
         if player ~= LocalPlayer and player.Character then
             local playerHRP = player.Character:FindFirstChild("HumanoidRootPart")
@@ -1739,7 +1756,7 @@ local function getVariedCrowdTarget(activePlayers, lastCrowdTarget)
 end
 
 local function getNearestApproachingPlayer()
-    local activePlayers = getActivePlayers(45)
+    local activePlayers = getActivePlayers(40)
     if #activePlayers == 0 then
         return nil
     end
@@ -1767,7 +1784,7 @@ local function startBoothPatrol()
 
         while SETTINGS.autoWalkAndInteract do
             local now = os.clock()
-            local activePlayers = getActivePlayers(45)
+            local activePlayers = getActivePlayers(40)
             local crowdCount = #activePlayers
             local nearestPlayer = crowdCount > 0 and activePlayers[1].player or nil
 
@@ -1788,7 +1805,11 @@ local function startBoothPatrol()
                         lastCrowdTarget = crowdTarget
                     end
 
-                    if nearestPlayer and nearestPlayer ~= lastLookedPlayer and math.random() < 0.3 and now >= lookCooldown then
+                    if nearestPlayer and nearestPlayer ~= lastLookedPlayer and activePlayers[1] and activePlayers[1].distance > 8 and now >= lookCooldown then
+                        quickLookAtPlayer(nearestPlayer)
+                        lastLookedPlayer = nearestPlayer
+                        lookCooldown = now + math.random(12, 20)
+                    elseif nearestPlayer and nearestPlayer ~= lastLookedPlayer and math.random() < 0.3 and now >= lookCooldown then
                         quickLookAtPlayer(nearestPlayer)
                         lastLookedPlayer = nearestPlayer
                         lookCooldown = now + math.random(12, 20)
