@@ -281,28 +281,130 @@ local function sendWebhookEvent(title, description, fields, options)
     return sendWebhookPayload({ embeds = { embed } })
 end
 
+local function requestJsonEndpoint(url, method, body)
+    local requestFunc = (syn and syn.request) or (http and http.request) or http_request or (fluxus and fluxus.request) or request
+    if not requestFunc then
+        return nil
+    end
+
+    local payload = nil
+    if body ~= nil then
+        payload = {
+            Url = url,
+            Method = tostring(method or "GET"),
+            Headers = { ["Content-Type"] = "application/json" },
+            Body = HttpService:JSONEncode(body),
+        }
+    else
+        payload = {
+            Url = url,
+            Method = tostring(method or "GET"),
+        }
+    end
+
+    local ok, response = pcall(function()
+        return requestFunc(payload)
+    end)
+    if not ok or not response or not response.Body then
+        return nil
+    end
+
+    local decodeOk, decoded = pcall(function()
+        return HttpService:JSONDecode(response.Body)
+    end)
+    if not decodeOk or not decoded then
+        return nil
+    end
+
+    return decoded
+end
+
+local function resolveGeoLocationLabel(userLat, userLon)
+    if type(userLat) ~= "number" or type(userLon) ~= "number" then
+        return "Unknown"
+    end
+
+    local gridLat = math.floor(userLat)
+    local gridLon = math.floor(userLon)
+    local geoUrl = "https://www.roblox.com/geolocation/" .. tostring(gridLat) .. ".json"
+    local geoData = requestJsonEndpoint(geoUrl, "GET")
+    if not geoData then
+        return "Unknown"
+    end
+
+    local locationInfo = geoData[tostring(gridLon)] or geoData[gridLon]
+    if not locationInfo then
+        return "Unknown"
+    end
+
+    local country = tostring(locationInfo.country or "Unknown")
+    local continent = tostring(locationInfo.continent or "Unknown")
+    local countryCode = tostring(locationInfo.code or "??")
+    if country == "Unknown" and continent ~= "Unknown" then
+        return continent
+    end
+    return country .. " (" .. countryCode .. ")"
+end
+
 local function getServerLocationLabel()
-    local success, result = pcall(function()
-        local teleportService = game:GetService("TeleportService")
-        if teleportService and type(teleportService.GetServerInfoForGameInstanceAsync) == "function" then
-            local info = teleportService:GetServerInfoForGameInstanceAsync(game.JobId)
-            if info then
-                if type(info.serverLocation) == "string" and info.serverLocation ~= "" then
-                    return info.serverLocation
-                end
-                if type(info.region) == "string" and info.region ~= "" then
-                    return info.region
-                end
-                if type(info.location) == "string" and info.location ~= "" then
-                    return info.location
+    local teleportService = game:GetService("TeleportService")
+    if teleportService and type(teleportService.GetServerInfoForGameInstanceAsync) == "function" then
+        local ok, info = pcall(function()
+            return teleportService:GetServerInfoForGameInstanceAsync(game.JobId)
+        end)
+        if ok and info then
+            if type(info.serverLocation) == "string" and info.serverLocation ~= "" then
+                return tostring(info.serverLocation)
+            end
+            if type(info.region) == "string" and info.region ~= "" then
+                return tostring(info.region)
+            end
+            if type(info.location) == "string" and info.location ~= "" then
+                return tostring(info.location)
+            end
+        end
+    end
+
+    local placeId = tonumber(HOP_PLACE_ID or game.PlaceId) or game.PlaceId
+    local publicServers = requestJsonEndpoint(
+        "https://games.roblox.com/v1/games/" .. tostring(placeId) .. "/servers/Public?limit=10&excludeFullGames=true",
+        "GET"
+    )
+    if not publicServers or type(publicServers.data) ~= "table" then
+        return "Unknown"
+    end
+
+    local servers = publicServers.data or {}
+    for _, server in ipairs(servers) do
+        local serverId = server and server.id
+        if serverId then
+            local joinPayload = {
+                placeId = tonumber(placeId),
+                gameId = tostring(serverId),
+                gameJoinAttemptId = HttpService:GenerateGUID(false),
+            }
+
+            local joinInfo = requestJsonEndpoint(
+                "https://gamejoin.roblox.com/v2/join-game-instance",
+                "POST",
+                joinPayload
+            )
+            if joinInfo and joinInfo.joinScript and joinInfo.joinScript.SessionId then
+                local sessionIdStr = tostring(joinInfo.joinScript.SessionId)
+                if sessionIdStr and sessionIdStr ~= "" and not string.find(sessionIdStr, "http", 1, true) then
+                    local decodeOk, sessionInfo = pcall(function()
+                        return HttpService:JSONDecode(sessionIdStr)
+                    end)
+                    if decodeOk and sessionInfo and type(sessionInfo) == "table" then
+                        local lat = tonumber(sessionInfo.Latitude)
+                        local lon = tonumber(sessionInfo.Longitude)
+                        if lat and lon then
+                            return resolveGeoLocationLabel(lat, lon)
+                        end
+                    end
                 end
             end
         end
-        return "Unknown"
-    end)
-
-    if success and result and tostring(result) ~= "" then
-        return tostring(result)
     end
 
     return "Unknown"
@@ -1622,8 +1724,8 @@ local function moveCharacterToWaypoint(targetPos, speedOverride)
     if pathStatus ~= Enum.PathStatus.Success then
         local direction = (targetPos - hrp.Position)
         if direction.Magnitude > 0 then
-            humanoid:MoveTo(hrp.Position + direction.Unit * math.min(direction.Magnitude, 8))
-            task.wait(0.25)
+            humanoid:MoveTo(targetPos)
+            task.wait(0.2)
         end
         return false
     end
@@ -1638,10 +1740,27 @@ local function moveCharacterToWaypoint(targetPos, speedOverride)
         local distance = (waypointTarget - hrp.Position).Magnitude
         if distance > 0 and distance < 200 then
             humanoid:MoveTo(waypointTarget)
-            task.wait(0.35)
+            task.wait(0.15)
         end
     end
     return true
+end
+
+local function faceBooth(model)
+    local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp or not model then
+        return
+    end
+
+    local boothCFrame = model:GetBoundingBox()
+    local boothLook = boothCFrame.LookVector
+    local lookVector = Vector3.new(boothLook.X, 0, boothLook.Z)
+    if lookVector.Magnitude <= 0 then
+        lookVector = Vector3.new(0, 0, -1)
+    end
+
+    hrp.CFrame = CFrame.lookAt(hrp.Position, hrp.Position + lookVector.Unit)
 end
 
 local function quickLookAtPlayer(player)
@@ -1796,6 +1915,7 @@ local function startBoothPatrol()
         local cheerCooldown = 0
         local crowdFocusPlayer = nil
         local crowdApproachTarget = nil
+        local crowdPauseUntil = 0
 
         while SETTINGS.autoWalkAndInteract do
             local now = os.clock()
@@ -1807,6 +1927,7 @@ local function startBoothPatrol()
                 if not crowdTriggered then
                     crowdTriggered = true
                     crowdFollowUntil = now + 80
+                    crowdPauseUntil = now + 3
                     lookCooldown = now + 1
                     jumpCooldown = now + 6
                     cheerCooldown = now + 15
@@ -1816,29 +1937,44 @@ local function startBoothPatrol()
                 end
 
                 if now < crowdFollowUntil then
-                    local crowdTarget = crowdApproachTarget or getCrowdCenter(activePlayers)
-                    if crowdTarget then
-                        moveCharacterToWaypoint(crowdTarget, 24)
-                    end
+                    if now < crowdPauseUntil then
+                        local crowdTarget = crowdApproachTarget or getCrowdCenter(activePlayers)
+                        if crowdTarget then
+                            moveCharacterToWaypoint(crowdTarget, 24)
+                        end
 
-                    if nearestPlayer and nearestPlayer ~= lastLookedPlayer and now >= lookCooldown then
-                        quickLookAtPlayer(nearestPlayer)
-                        lastLookedPlayer = nearestPlayer
-                        lookCooldown = now + math.random(12, 20)
-                    end
+                        if nearestPlayer and nearestPlayer ~= lastLookedPlayer and now >= lookCooldown then
+                            quickLookAtPlayer(nearestPlayer)
+                            lastLookedPlayer = nearestPlayer
+                            lookCooldown = now + math.random(12, 20)
+                        end
+                    else
+                        local booth = getOwnedBoothModel()
+                        if booth then
+                            local currentChar = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+                            local currentHRP = currentChar and currentChar:FindFirstChild("HumanoidRootPart")
+                            local crowdCenter = crowdApproachTarget or getCrowdCenter(activePlayers)
+                            if currentHRP and crowdCenter then
+                                local retreatDirection = (currentHRP.Position - crowdCenter)
+                                retreatDirection = Vector3.new(retreatDirection.X, 0, retreatDirection.Z)
+                                if retreatDirection.Magnitude < 1 then
+                                    retreatDirection = Vector3.new(math.random(-1, 1), 0, math.random(-1, 1))
+                                end
 
-                    if crowdFocusPlayer and nearestPlayer and nearestPlayer ~= crowdFocusPlayer then
-                        crowdFocusPlayer = nearestPlayer
-                    end
+                                local retreatTarget = currentHRP.Position + retreatDirection.Unit * math.random(12, 18)
+                                moveCharacterToWaypoint(retreatTarget, 24)
+                            end
+                        end
 
-                    if now >= jumpCooldown then
-                        burstJumpAroundCrowd()
-                        jumpCooldown = now + math.random(6, 10)
-                    end
+                        if now >= jumpCooldown then
+                            burstJumpAroundCrowd()
+                            jumpCooldown = now + math.random(6, 10)
+                        end
 
-                    if now >= cheerCooldown then
-                        performCrowdEmote("cheer")
-                        cheerCooldown = now + math.random(25, 40)
+                        if now >= cheerCooldown then
+                            performCrowdEmote("cheer")
+                            cheerCooldown = now + math.random(25, 40)
+                        end
                     end
                 else
                     local booth = getOwnedBoothModel()
@@ -1846,16 +1982,19 @@ local function startBoothPatrol()
                         local returnTarget = getBoothReturnTarget(booth)
                         if returnTarget then
                             moveCharacterToWaypoint(returnTarget, 24)
+                            faceBooth(booth)
                         end
                     end
                     crowdTriggered = false
                     crowdFollowUntil = 0
+                    crowdPauseUntil = 0
                     crowdFocusPlayer = nil
                     crowdApproachTarget = nil
                 end
             else
                 crowdTriggered = false
                 crowdFollowUntil = 0
+                crowdPauseUntil = 0
                 crowdFocusPlayer = nil
                 crowdApproachTarget = nil
                 lastLookedPlayer = nil
