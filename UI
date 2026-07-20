@@ -297,18 +297,48 @@ local function sendWebhookEvent(title, description, fields, options)
     return sendWebhookPayload({ embeds = { embed } })
 end
 
+local function getServerLocationLabel()
+    local success, result = pcall(function()
+        local teleportService = game:GetService("TeleportService")
+        if teleportService and type(teleportService.GetServerInfoForGameInstanceAsync) == "function" then
+            local info = teleportService:GetServerInfoForGameInstanceAsync(game.JobId)
+            if info then
+                if type(info.serverLocation) == "string" and info.serverLocation ~= "" then
+                    return info.serverLocation
+                end
+                if type(info.region) == "string" and info.region ~= "" then
+                    return info.region
+                end
+                if type(info.location) == "string" and info.location ~= "" then
+                    return info.location
+                end
+            end
+        end
+        return "Unknown"
+    end)
+
+    if success and result and tostring(result) ~= "" then
+        return tostring(result)
+    end
+
+    return "Unknown"
+end
+
 local function notifyScriptExecution()
     local placeValue = tostring(HOP_PLACE_ID or game.PlaceId)
     local playerCount = tonumber(Players.NumPlayers) or 0
-    local description = "Script executed. " .. tostring(LocalPlayer.Name) .. " has teleported/joined.\n• Place ID: " .. placeValue .. "\n• Players in server: " .. tostring(playerCount)
-    local color = (playerCount < 14) and 0xFF4D4D or 0x2ECC71
-    return sendWebhookEvent("Donate UI Executed", description, {
-        { name = "Player", value = tostring(LocalPlayer.Name), inline = true },
-        { name = "Place", value = placeValue, inline = true },
-        { name = "Players", value = tostring(playerCount), inline = true },
-    }, {
+    local serverLocation = getServerLocationLabel()
+    local description = "• Place ID: " .. placeValue .. "\n• Players in server: " .. tostring(playerCount) .. "\n• Server Location: " .. tostring(serverLocation)
+    local nonBusyStatus = SETTINGS and SETTINGS.antiNonBusyServers and "enabled" or "disabled"
+    description = description .. "\n\nNon-busy hop is currently " .. nonBusyStatus .. "."
+
+    if playerCount < 13 then
+        description = description .. "\n\nThe user has teleported to a small server. Please wait for the advanced hopper to teleport you, or enable it if possible."
+    end
+
+    local color = (playerCount < 13) and 0xFF4D4D or 0x2ECC71
+    return sendWebhookEvent("UI successfully executed upon hop. server stats r below.", description, {}, {
         color = color,
-        author = { name = "thanks for using" },
     })
 end
 
