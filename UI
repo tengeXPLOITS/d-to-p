@@ -1405,7 +1405,7 @@ local function setAntiAfk(enabled)
 end
 setAntiAfk(true)
 
-local autoWalkToggle, _ = addToggle(frames.Main, "auto walk and interact with plrs (work in progress)", SETTINGS.autoWalkAndInteract, function(b)
+local autoWalkToggle, _ = addToggle(frames.Main, "walk and interact w ppl (BETA)", SETTINGS.autoWalkAndInteract, function(b)
     SETTINGS.autoWalkAndInteract = b and true or false
     pcall(saveSettings)
     if SETTINGS.autoWalkAndInteract then
