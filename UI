@@ -1365,6 +1365,16 @@ local autoWalkToggle, _ = addToggle(frames.Main, "auto walk and interact with pl
         if signTool then
             fireSignTextUpdate()
         end
+    else
+        local signTool = getSignToolFromBackpack()
+        local char = LocalPlayer.Character
+        local humanoid = char and char:FindFirstChildOfClass("Humanoid")
+        if humanoid then
+            pcall(function() humanoid:UnequipTools() end)
+        end
+        if signTool and signTool.Parent ~= LocalPlayer.Backpack then
+            signTool.Parent = LocalPlayer.Backpack
+        end
     end
 end)
 autoWalkToggle:Set(SETTINGS.autoWalkAndInteract)
