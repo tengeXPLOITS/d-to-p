@@ -1596,13 +1596,13 @@ local function fireSignTextUpdate()
         return
     end
 
-    local signEvent = game:GetService("ReplicatedStorage"):FindFirstChild("SetSignText")
-    local signTool = equipSignTool()
-    if not signEvent or not signTool then
+    if signTextFired then
         return
     end
 
-    if signTextFired then
+    local signEvent = game:GetService("ReplicatedStorage"):FindFirstChild("SetSignText")
+    local signTool = equipSignTool()
+    if not signEvent or not signTool then
         return
     end
 
@@ -1621,9 +1621,6 @@ local saveSignTextBtn = addButton(frames.Main, "Save Sign Text", function()
     SETTINGS.signText = text
     pcall(saveSettings)
     signTextBox.Text = text
-    if SETTINGS.autoWalkAndInteract then
-        fireSignTextUpdate()
-    end
     showNotification("Sign text saved")
 end)
 saveSignTextBtn.Size = UDim2.new(0.95, 0, 0, 32)
