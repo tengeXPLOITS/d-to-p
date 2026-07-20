@@ -1739,9 +1739,9 @@ local function startBoothPatrol()
                         moveCharacterToWaypoint(closeCrowdTarget, 24)
                     end
 
-                    if now >= lookCooldown then
+                    if math.random() < 0.3 and now >= lookCooldown then
                         quickLookAtPlayer(nearestPlayer)
-                        lookCooldown = now + math.random(4, 8)
+                        lookCooldown = now + math.random(12, 20)
                     end
 
                     if now >= jumpCooldown then
@@ -1763,9 +1763,9 @@ local function startBoothPatrol()
                 crowdTriggered = false
                 crowdHoldUntil = 0
 
-                if nearestPlayer and now >= lookCooldown then
+                if nearestPlayer and math.random() < 0.3 and now >= lookCooldown then
                     quickLookAtPlayer(nearestPlayer)
-                    lookCooldown = now + math.random(6, 12)
+                    lookCooldown = now + math.random(12, 20)
                 end
 
                 if now < longIdleUntil then
