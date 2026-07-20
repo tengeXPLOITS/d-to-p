@@ -398,8 +398,6 @@ if not SETTINGS.selectedEmote or type(SETTINGS.selectedEmote) ~= "string" or SET
     SETTINGS.selectedEmote = EMOTE_OPTIONS[1].name
 end
 
-startDonationSystemNotifWatcher()
-
 local function parseServerStayDuration(rawValue)
     if rawValue == nil then
         return nil
