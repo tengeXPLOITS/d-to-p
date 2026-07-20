@@ -118,9 +118,8 @@ end
 
 local donationThankYouThread = nil
 local donationSystemNotifConn = nil
-local notifierEventConn = nil
-local pendingBalanceUpdateConn = nil
-local latestPendingBalance = nil
+local claimedInfoRaisedConn = nil
+local lastClaimedRaisedValue = nil
 
 local function sendDonationEmoteResponse()
     local chatEvents = game:GetService("ReplicatedStorage"):FindFirstChild("DefaultChatSystemChatEvents")
@@ -190,88 +189,79 @@ local function startDonationSystemNotifWatcher()
     end)
 end
 
-local function startNotifierEventWatcher()
-    if notifierEventConn then
+local function parseRaisedTextFromLabel(text)
+    local raw = tostring(text or "")
+    local amountText = string.match(raw, "([%d%.]+)%s*Raised") or string.match(raw, "Raised%s*([%d%.]+)")
+    if amountText then
+        return tonumber(amountText)
+    end
+    return nil
+end
+
+local function startClaimedInfoRaisedWatcher()
+    if claimedInfoRaisedConn then
         return
     end
 
-    local replicatedStorage = game:GetService("ReplicatedStorage")
-    local notifierEvent = replicatedStorage:FindFirstChild("NotifierEvent")
-    if not notifierEvent then
-        local eventsFolder = replicatedStorage:FindFirstChild("Events")
-        notifierEvent = eventsFolder and eventsFolder:FindFirstChild("NotifierEvent")
-    end
-    if not notifierEvent or not notifierEvent:IsA("RemoteEvent") then
+    local booth = getOwnedBoothModel()
+    if not booth then
         return
     end
 
-    notifierEventConn = notifierEvent.OnClientEvent:Connect(function(donorName, localUserName, amount)
-        local donorText = tostring(donorName or "")
-        local localUserText = tostring(localUserName or "")
-        local amountText = tostring(amount or 0)
-        if donorText == "" or localUserText == "" then
+    local claimedPart = booth:FindFirstChild("ClaimedPart")
+    if not claimedPart then
+        return
+    end
+
+    local claimedInfo = claimedPart:FindFirstChild("ClaimedInfo")
+    if not claimedInfo then
+        return
+    end
+
+    local userRaised = claimedInfo:FindFirstChild("UserRaised")
+    if not userRaised or not userRaised:IsA("TextLabel") then
+        return
+    end
+
+    lastClaimedRaisedValue = parseRaisedTextFromLabel(userRaised.Text)
+
+    claimedInfoRaisedConn = userRaised:GetPropertyChangedSignal("Text"):Connect(function()
+        local currentRaised = parseRaisedTextFromLabel(userRaised.Text)
+        if currentRaised == nil then
             return
         end
 
-        local localPlayerName = string.lower(tostring(LocalPlayer.Name or ""))
-        local localPlayerDisplay = string.lower(tostring(LocalPlayer.DisplayName or ""))
-        local localUserLower = string.lower(localUserText)
-
-        local isLocalUserMatch = localUserLower == localPlayerName
-            or localUserLower == localPlayerDisplay
-            or string.find(localUserLower, localPlayerName, 1, true)
-            or string.find(localUserLower, localPlayerDisplay, 1, true)
-
-        if isLocalUserMatch then
-            local pendingBalanceText = tostring(latestPendingBalance or amountText or 0)
-            pcall(function()
-                showNotification("Donation event detected: +" .. amountText .. " from " .. donorText)
-            end)
-
+        if lastClaimedRaisedValue ~= nil and currentRaised > lastClaimedRaisedValue then
+            local delta = currentRaised - lastClaimedRaisedValue
             local webhookOk, webhookErr = sendWebhookEvent(
                 "Donation Received",
-                "Local donation event observed for this client. (DONATION)",
+                "Booth UserRaised text changed for the claimed booth.",
                 {
-                    { name = "Donor", value = donorText, inline = true },
-                    { name = "Recipient", value = localUserText, inline = true },
-                    { name = "Donation Amount", value = amountText, inline = true },
-                    { name = "Pending Balance", value = pendingBalanceText, inline = true },
+                    { name = "Local User", value = tostring(LocalPlayer.Name), inline = true },
+                    { name = "Old Raised", value = tostring(lastClaimedRaisedValue), inline = true },
+                    { name = "New Raised", value = tostring(currentRaised), inline = true },
+                    { name = "Robux Received", value = tostring(delta) .. "R$", inline = true },
                 },
                 {
                     color = 0x2ECC71,
                     author = { name = "DonateToPlayers UI" },
-                    footer = { text = "NotifierEvent local-user trigger" },
+                    footer = { text = "ClaimedInfo.UserRaised text watcher" },
                 }
             )
 
             if webhookOk then
                 pcall(function()
-                    showNotification("Donation webhook sent: +" .. amountText .. " from " .. donorText)
+                    showNotification("Donation webhook sent: +" .. tostring(delta) .. "R$ from booth text change")
                 end)
+                triggerDonationThankYou("donor")
             else
                 pcall(function()
                     showNotification("Donation webhook failed: " .. tostring(webhookErr))
                 end)
             end
-
-            triggerDonationThankYou(donorText)
         end
-    end)
-end
 
-local function startPendingBalanceUpdateWatcher()
-    if pendingBalanceUpdateConn then
-        return
-    end
-
-    local eventsFolder = game:GetService("ReplicatedStorage"):FindFirstChild("Events")
-    local pendingBalanceUpdate = eventsFolder and eventsFolder:FindFirstChild("PedingBalanceUpdate")
-    if not pendingBalanceUpdate or not pendingBalanceUpdate:IsA("RemoteEvent") then
-        return
-    end
-
-    pendingBalanceUpdateConn = pendingBalanceUpdate.OnClientEvent:Connect(function(pendingBalance)
-        latestPendingBalance = tonumber(pendingBalance) or 0
+        lastClaimedRaisedValue = currentRaised
     end)
 end
 
@@ -549,8 +539,6 @@ if not SETTINGS.selectedEmote or type(SETTINGS.selectedEmote) ~= "string" or SET
 end
 
 startDonationSystemNotifWatcher()
-startNotifierEventWatcher()
-startPendingBalanceUpdateWatcher()
 
 local function parseServerStayDuration(rawValue)
     if rawValue == nil then
@@ -1429,7 +1417,10 @@ end
 -- Auto-run claim once UI loads (script already claims automatically)
 task.spawn(function()
     task.wait(1.5)
-    pcall(claimFirstAvailable)
+    local claimed = pcall(claimFirstAvailable)
+    if claimed then
+        startClaimedInfoRaisedWatcher()
+    end
 end)
 
 -- Queue-on-teleport helper for provided UI loadstring
