@@ -1835,28 +1835,25 @@ local function startBoothPatrol()
                 elseif now < idlePauseUntil then
                     task.wait(0.75)
                 else
-                    local signTool = equipSignTool()
-                    if signTool then
-                        local booth = getOwnedBoothModel()
-                        if booth then
-                            local patrolTargets = getBoothPatrolTargets(booth)
-                            if #patrolTargets > 0 then
-                                patrolIndex = patrolIndex % #patrolTargets + 1
-                                moveCharacterToWaypoint(patrolTargets[patrolIndex], 21)
-                            end
-                        else
-                            local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
-                            local hrp = char and char:FindFirstChild("HumanoidRootPart")
-                            if hrp then
-                                moveCharacterToWaypoint(hrp.Position + Vector3.new(4, 0, 0), 21)
-                            end
+                    local booth = getOwnedBoothModel()
+                    if booth then
+                        local patrolTargets = getBoothPatrolTargets(booth)
+                        if #patrolTargets > 0 then
+                            patrolIndex = patrolIndex % #patrolTargets + 1
+                            moveCharacterToWaypoint(patrolTargets[patrolIndex], 21)
                         end
+                    else
+                        local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+                        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+                        if hrp then
+                            moveCharacterToWaypoint(hrp.Position + Vector3.new(4, 0, 0), 21)
+                        end
+                    end
 
-                        if math.random() < 0.1 then
-                            longIdleUntil = now + math.random(420, 600)
-                        elseif math.random() < 0.2 then
-                            idlePauseUntil = now + math.random(0.75, 2)
-                        end
+                    if math.random() < 0.1 then
+                        longIdleUntil = now + math.random(420, 600)
+                    elseif math.random() < 0.2 then
+                        idlePauseUntil = now + math.random(0.75, 2)
                     end
                 end
             end
