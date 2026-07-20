@@ -328,7 +328,8 @@ local function notifyScriptExecution()
     local placeValue = tostring(HOP_PLACE_ID or game.PlaceId)
     local playerCount = tonumber(Players.NumPlayers) or 0
     local serverLocation = getServerLocationLabel()
-    local description = "• Place ID: " .. placeValue .. "\n• Players in server: " .. tostring(playerCount) .. "\n• Server Location: " .. tostring(serverLocation)
+    local playerName = tostring(LocalPlayer.Name or "Unknown")
+    local description = "• Place ID: " .. placeValue .. "\n• Players in server: " .. tostring(playerCount) .. "\n• Server Location: " .. tostring(serverLocation) .. "\n• Join context: Donate UI executed for " .. playerName .. " in this server."
     local nonBusyStatus = SETTINGS and SETTINGS.antiNonBusyServers and "enabled" or "disabled"
     description = description .. "\n\nNon-busy hop is currently " .. nonBusyStatus .. "."
 
@@ -337,7 +338,7 @@ local function notifyScriptExecution()
     end
 
     local color = (playerCount < 13) and 0xFF4D4D or 0x2ECC71
-    return sendWebhookEvent("UI successfully executed upon hop. server stats r below.", description, {}, {
+    return sendWebhookEvent("Donate UI executed upon hop. server stats below.", description, {}, {
         color = color,
     })
 end
