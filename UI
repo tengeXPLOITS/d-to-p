@@ -116,6 +116,52 @@ local function getNearestDonorLabel()
     return tostring(LocalPlayer.Name)
 end
 
+local donationThankYouThread = nil
+
+local function sendDonationEmoteResponse()
+    local chatEvents = game:GetService("ReplicatedStorage"):FindFirstChild("DefaultChatSystemChatEvents")
+    local sayMessageRequest = chatEvents and chatEvents:FindFirstChild("SayMessageRequest")
+    if sayMessageRequest and sayMessageRequest:IsA("RemoteEvent") then
+        local emote = math.random() < 0.5 and "wave" or "cheer"
+        pcall(function()
+            sayMessageRequest:FireServer("/e " .. emote, "All")
+        end)
+    end
+end
+
+local function triggerDonationThankYou(donorLabel)
+    local restoredText = tostring(SETTINGS and SETTINGS.boothText or (boothTextBox and boothTextBox.Text or "Any donation brightens my day! ❤️"))
+    local thankYouText = "Thank you, " .. tostring(donorLabel or LocalPlayer.Name) .. "! ❤️"
+
+    pcall(function()
+        if type(fireBoothTextEvent) == "function" then
+            fireBoothTextEvent(thankYouText)
+        else
+            SETTINGS.boothText = thankYouText
+        end
+    end)
+
+    sendDonationEmoteResponse()
+
+    if donationThankYouThread then
+        pcall(function()
+            task.cancel(donationThankYouThread)
+        end)
+    end
+
+    donationThankYouThread = task.spawn(function()
+        task.wait(30)
+        pcall(function()
+            if type(fireBoothTextEvent) == "function" then
+                fireBoothTextEvent(restoredText)
+            else
+                SETTINGS.boothText = restoredText
+            end
+        end)
+        donationThankYouThread = nil
+    end)
+end
+
 local function startDonationRaisedWebhookWatcher()
     local raised = findRaisedStat() or ensureRaisedStat()
     if not raised then
@@ -152,6 +198,7 @@ local function startDonationRaisedWebhookWatcher()
             pcall(function()
                 showNotification("Donation webhook sent: +" .. tostring(delta))
             end)
+            triggerDonationThankYou(donorLabel)
         else
             pcall(function()
                 showNotification("Donation webhook failed: " .. tostring(webhookErr))
@@ -1358,16 +1405,17 @@ local function setAntiAfk(enabled)
 end
 setAntiAfk(true)
 
-local autoWalkToggle, _ = addToggle(frames.Main, "auto walk and interact with plrs (beta)", SETTINGS.autoWalkAndInteract, function(b)
+local autoWalkToggle, _ = addToggle(frames.Main, "auto walk and interact with plrs (work in progress)", SETTINGS.autoWalkAndInteract, function(b)
     SETTINGS.autoWalkAndInteract = b and true or false
     pcall(saveSettings)
     if SETTINGS.autoWalkAndInteract then
         local signTool = equipSignTool()
         if signTool then
             fireSignTextUpdate()
-            startBoothPatrol()
+            scheduleBoothPatrolStart(20)
         end
     else
+        cancelBoothPatrolStart()
         stopBoothPatrol()
         local signTool = getSignToolFromBackpack()
         local char = LocalPlayer.Character
@@ -1381,6 +1429,13 @@ local autoWalkToggle, _ = addToggle(frames.Main, "auto walk and interact with pl
     end
 end)
 autoWalkToggle:Set(SETTINGS.autoWalkAndInteract)
+
+local autoWalkHint = addLabel(frames.Main, "If you want the feature to work, rejoin with it set as enabled, or server hop!")
+autoWalkHint.TextSize = 12
+autoWalkHint.TextColor3 = Color3.fromRGB(180, 180, 180)
+autoWalkHint.Size = UDim2.new(0.95, 0, 0, 34)
+autoWalkHint.TextWrapped = true
+autoWalkHint.TextYAlignment = Enum.TextYAlignment.Top
 
 addLabel(frames.Main, "Sign text")
 local signTextBox = addTextBox(frames.Main, "Type sign text here...", function(v)
@@ -1469,6 +1524,7 @@ saveSignTextBtn.TextSize = 13
 
 local boothPatrolThread = nil
 local boothPatrolRunning = false
+local boothPatrolStartThread = nil
 
 local function getOwnedBoothModel()
     local stands = workspace:FindFirstChild("Stands")
@@ -1531,12 +1587,18 @@ local function moveCharacterToWaypoint(targetPos)
     local pathStatus = path:ComputeAsync(hrp.Position, targetPos)
     if pathStatus ~= Enum.PathStatus.Success then
         humanoid:MoveTo(targetPos)
+        if math.random() < 0.25 then
+            humanoid.Jump = true
+        end
         return false
     end
 
     local waypoints = path:GetWaypoints()
     for _, waypoint in ipairs(waypoints) do
         if waypoint.Action == Enum.PathWaypointAction.Jump then
+            humanoid.Jump = true
+        end
+        if math.random() < 0.18 then
             humanoid.Jump = true
         end
         humanoid:MoveTo(waypoint.Position)
@@ -1582,6 +1644,26 @@ local function startBoothPatrol()
     end)
 end
 
+local function cancelBoothPatrolStart()
+    if boothPatrolStartThread then
+        pcall(function()
+            task.cancel(boothPatrolStartThread)
+        end)
+        boothPatrolStartThread = nil
+    end
+end
+
+local function scheduleBoothPatrolStart(delaySeconds)
+    cancelBoothPatrolStart()
+    boothPatrolStartThread = task.spawn(function()
+        task.wait(math.max(0, tonumber(delaySeconds) or 20))
+        if SETTINGS.autoWalkAndInteract then
+            startBoothPatrol()
+        end
+        boothPatrolStartThread = nil
+    end)
+end
+
 local function stopBoothPatrol()
     if boothPatrolThread then
         pcall(function()
@@ -1599,7 +1681,7 @@ local function bindSignEquipOnRespawn()
     local signTool = equipSignTool()
     if signTool then
         fireSignTextUpdate()
-        startBoothPatrol()
+        scheduleBoothPatrolStart(20)
     end
 end
 
