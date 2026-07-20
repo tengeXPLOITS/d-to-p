@@ -116,153 +116,13 @@ local function getNearestDonorLabel()
     return tostring(LocalPlayer.Name)
 end
 
-local donationThankYouThread = nil
-local donationSystemNotifConn = nil
-local claimedInfoRaisedConn = nil
-local lastClaimedRaisedValue = nil
-
-local function sendDonationEmoteResponse()
-    local chatEvents = game:GetService("ReplicatedStorage"):FindFirstChild("DefaultChatSystemChatEvents")
-    local sayMessageRequest = chatEvents and chatEvents:FindFirstChild("SayMessageRequest")
-    if sayMessageRequest and sayMessageRequest:IsA("RemoteEvent") then
-        local emote = math.random() < 0.5 and "wave" or "cheer"
-        pcall(function()
-            sayMessageRequest:FireServer("/e " .. emote, "All")
-        end)
-    end
-end
-
-local function triggerDonationThankYou(donorLabel)
-    local restoredText = tostring(SETTINGS and SETTINGS.boothText or (boothTextBox and boothTextBox.Text or "Any donation brightens my day! ❤️"))
-    local thankYouText = "Thank you, " .. tostring(donorLabel or LocalPlayer.Name) .. "! ❤️"
-
-    pcall(function()
-        if type(fireBoothTextEvent) == "function" then
-            fireBoothTextEvent(thankYouText)
-        else
-            SETTINGS.boothText = thankYouText
-        end
-    end)
-
-    sendDonationEmoteResponse()
-
+local function stopDonationPaths()
     if donationThankYouThread then
         pcall(function()
             task.cancel(donationThankYouThread)
         end)
-    end
-
-    donationThankYouThread = task.spawn(function()
-        task.wait(30)
-        pcall(function()
-            if type(fireBoothTextEvent) == "function" then
-                fireBoothTextEvent(restoredText)
-            else
-                SETTINGS.boothText = restoredText
-            end
-        end)
         donationThankYouThread = nil
-    end)
-end
-
-local function startDonationSystemNotifWatcher()
-    if donationSystemNotifConn then
-        return
     end
-
-    local systemNotif = game:GetService("ReplicatedStorage"):FindFirstChild("SystemNotif")
-    if not systemNotif or not systemNotif:IsA("RemoteEvent") then
-        return
-    end
-
-    donationSystemNotifConn = systemNotif.OnClientEvent:Connect(function(donorName, amount, reason)
-        local donorText = tostring(donorName or "")
-        local reasonText = tostring(reason or "")
-        if donorText == "" then
-            return
-        end
-
-        local normalizedReason = string.lower(reasonText)
-        if string.find(normalizedReason, "don", 1, true) then
-            triggerDonationThankYou(donorText)
-        end
-    end)
-end
-
-local function parseRaisedTextFromLabel(text)
-    local raw = tostring(text or "")
-    local amountText = string.match(raw, "([%d%.]+)%s*Raised") or string.match(raw, "Raised%s*([%d%.]+)")
-    if amountText then
-        return tonumber(amountText)
-    end
-    return nil
-end
-
-local function startClaimedInfoRaisedWatcher()
-    if claimedInfoRaisedConn then
-        return
-    end
-
-    local booth = getOwnedBoothModel()
-    if not booth then
-        return
-    end
-
-    local claimedPart = booth:FindFirstChild("ClaimedPart")
-    if not claimedPart then
-        return
-    end
-
-    local claimedInfo = claimedPart:FindFirstChild("ClaimedInfo")
-    if not claimedInfo then
-        return
-    end
-
-    local userRaised = claimedInfo:FindFirstChild("UserRaised")
-    if not userRaised or not userRaised:IsA("TextLabel") then
-        return
-    end
-
-    lastClaimedRaisedValue = parseRaisedTextFromLabel(userRaised.Text)
-
-    claimedInfoRaisedConn = userRaised:GetPropertyChangedSignal("Text"):Connect(function()
-        local currentRaised = parseRaisedTextFromLabel(userRaised.Text)
-        if currentRaised == nil then
-            return
-        end
-
-        if lastClaimedRaisedValue ~= nil and currentRaised > lastClaimedRaisedValue then
-            local delta = currentRaised - lastClaimedRaisedValue
-            local webhookOk, webhookErr = sendWebhookEvent(
-                "Donation Received",
-                "Booth UserRaised text changed for the claimed booth.",
-                {
-                    { name = "Local User", value = tostring(LocalPlayer.Name), inline = true },
-                    { name = "Old Raised", value = tostring(lastClaimedRaisedValue), inline = true },
-                    { name = "New Raised", value = tostring(currentRaised), inline = true },
-                    { name = "Robux Received", value = tostring(delta) .. "R$", inline = true },
-                },
-                {
-                    color = 0x2ECC71,
-                    author = { name = "DonateToPlayers UI" },
-                    footer = { text = "ClaimedInfo.UserRaised text watcher" },
-                }
-            )
-
-            if webhookOk then
-                pcall(function()
-                    showNotification("Donation webhook sent: +" .. tostring(delta) .. "R$ from booth text change")
-                end)
-                triggerDonationThankYou("donor")
-            else
-                pcall(function()
-                    showNotification("Donation webhook failed: " .. tostring(webhookErr))
-                end)
-            end
-        end
-
-        lastClaimedRaisedValue = currentRaised
-    end)
 end
 
 local function getExecutionKey()
@@ -1417,10 +1277,7 @@ end
 -- Auto-run claim once UI loads (script already claims automatically)
 task.spawn(function()
     task.wait(1.5)
-    local claimed = pcall(claimFirstAvailable)
-    if claimed then
-        startClaimedInfoRaisedWatcher()
-    end
+    pcall(claimFirstAvailable)
 end)
 
 -- Queue-on-teleport helper for provided UI loadstring
@@ -1714,7 +1571,7 @@ local function moveCharacterToWaypoint(targetPos)
     return true
 end
 
-local function stareAtPlayerAndJump(player)
+local function stareAtPlayer(player)
     local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     local humanoid = char and char:FindFirstChildOfClass("Humanoid")
@@ -1729,37 +1586,40 @@ local function stareAtPlayerAndJump(player)
     end
 
     local originalAutoRotate = humanoid.AutoRotate
+    local originalWalkSpeed = humanoid.WalkSpeed
     local stareDuration = math.random(5, 19)
     local targetLook = playerHRP.Position + Vector3.new(0, 1.2, 0)
     local startLook = hrp.CFrame.LookVector
     local endLook = (targetLook - hrp.Position).Unit
+    local startPos = hrp.Position
 
     pcall(function()
         humanoid.AutoRotate = false
+        humanoid.WalkSpeed = 0
     end)
 
     for i = 1, 12 do
         local alpha = i / 12
         local smoothLook = startLook:Lerp(endLook, alpha)
-        hrp.CFrame = CFrame.lookAt(hrp.Position, hrp.Position + smoothLook)
-        task.wait(0.04)
+        hrp.CFrame = CFrame.lookAt(startPos, startPos + smoothLook)
+        task.wait(0.03)
     end
 
     local holdUntil = os.clock() + stareDuration
     while os.clock() < holdUntil do
-        local sway = math.sin(os.clock() * 1.7) * 0.03
-        hrp.CFrame = CFrame.lookAt(hrp.Position, playerHRP.Position + Vector3.new(sway, 1.2, 0))
-        task.wait(0.08)
+        hrp.CFrame = CFrame.lookAt(startPos, targetLook)
+        task.wait(0.05)
     end
 
-    local jumpCount = math.random(3, 5)
+    local jumpCount = math.random(8, 15)
     for _ = 1, jumpCount do
         humanoid.Jump = true
-        task.wait(0.22)
+        task.wait(0.12)
     end
 
     pcall(function()
         humanoid.AutoRotate = originalAutoRotate
+        humanoid.WalkSpeed = originalWalkSpeed
     end)
 end
 
@@ -1804,7 +1664,7 @@ local function startBoothPatrol()
             if approachingPlayer then
                 nearbyHoldTimer = nearbyHoldTimer + 1.5
                 if nearbyHoldTimer >= 20 then
-                    stareAtPlayerAndJump(approachingPlayer)
+                    stareAtPlayer(approachingPlayer)
                     nearbyHoldTimer = 0
                     stareCooldown = math.random(240, 360)
                 end
@@ -1816,7 +1676,7 @@ local function startBoothPatrol()
             if not approachingPlayer and stareCooldown <= 0 then
                 local fallbackPlayer = getNearestApproachingPlayer()
                 if fallbackPlayer then
-                    stareAtPlayerAndJump(fallbackPlayer)
+                    stareAtPlayer(fallbackPlayer)
                     stareCooldown = math.random(240, 360)
                 end
             end
