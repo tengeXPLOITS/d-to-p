@@ -117,6 +117,10 @@ local function getNearestDonorLabel()
 end
 
 local donationThankYouThread = nil
+local donationSystemNotifConn = nil
+local notifierEventConn = nil
+local pendingBalanceUpdateConn = nil
+local latestPendingBalance = nil
 
 local function sendDonationEmoteResponse()
     local chatEvents = game:GetService("ReplicatedStorage"):FindFirstChild("DefaultChatSystemChatEvents")
@@ -162,64 +166,97 @@ local function triggerDonationThankYou(donorLabel)
     end)
 end
 
-local function startDonationRaisedWebhookWatcher()
-    local raised = findRaisedStat() or ensureRaisedStat()
-    if not raised then
-        return
-    end
-    local lastRaised = parseNumberValue(raised.Value) or 0
-
-    if donationRaisedWebhookConn then
+local function startDonationSystemNotifWatcher()
+    if donationSystemNotifConn then
         return
     end
 
-    local function maybeSendDonationWebhook(currentRaised)
-        local delta = currentRaised - lastRaised
-        if delta <= 0 then
+    local systemNotif = game:GetService("ReplicatedStorage"):FindFirstChild("SystemNotif")
+    if not systemNotif or not systemNotif:IsA("RemoteEvent") then
+        return
+    end
+
+    donationSystemNotifConn = systemNotif.OnClientEvent:Connect(function(donorName, amount, reason)
+        local donorText = tostring(donorName or "")
+        local reasonText = tostring(reason or "")
+        if donorText == "" then
             return
         end
 
-        local donorLabel = getNearestDonorLabel()
-        local webhookOk, webhookErr = sendWebhookEvent(
-            "Donation Received",
-            "Raised increased by " .. tostring(delta) .. " from " .. tostring(lastRaised) .. " to " .. tostring(currentRaised),
-            {
-                { name = "Donor", value = donorLabel, inline = true },
-                { name = "Delta", value = tostring(delta), inline = true },
-                { name = "Raised", value = tostring(currentRaised), inline = true },
-            },
-            {
-                color = 0x2ECC71,
-                author = { name = "DonateToPlayers UI" },
-                footer = { text = "leaderstats.Raised webhook trigger" },
-            }
-        )
-        if webhookOk then
-            pcall(function()
-                showNotification("Donation webhook sent: +" .. tostring(delta))
-            end)
-            triggerDonationThankYou(donorLabel)
-        else
-            pcall(function()
-                showNotification("Donation webhook failed: " .. tostring(webhookErr))
-            end)
+        local normalizedReason = string.lower(reasonText)
+        if string.find(normalizedReason, "don", 1, true) then
+            triggerDonationThankYou(donorText)
         end
-        lastRaised = currentRaised
+    end)
+end
+
+local function startNotifierEventWatcher()
+    if notifierEventConn then
+        return
     end
 
-    donationRaisedWebhookConn = raised:GetPropertyChangedSignal("Value"):Connect(function()
-        local currentRaised = parseNumberValue(raised.Value) or 0
-        maybeSendDonationWebhook(currentRaised)
-    end)
+    local notifierEvent = game:GetService("ReplicatedStorage"):FindFirstChild("NotifierEvent")
+    if not notifierEvent or not notifierEvent:IsA("RemoteEvent") then
+        return
+    end
 
-    task.spawn(function()
-        while donationRaisedWebhookConn do
-            local currentRaised = parseNumberValue(raised.Value) or 0
-            if currentRaised > lastRaised then
-                maybeSendDonationWebhook(currentRaised)
-            end
-            task.wait(0.6)
+    notifierEventConn = notifierEvent.OnClientEvent:Connect(function(donorName, localUserName, amount)
+        local donorText = tostring(donorName or "")
+        local localUserText = tostring(localUserName or "")
+        local amountText = tostring(amount or 0)
+        if donorText == "" or localUserText == "" then
+            return
         end
+
+        local isLocalUserMatch = string.lower(localUserText) == string.lower(LocalPlayer.Name)
+            or string.lower(localUserText) == string.lower(LocalPlayer.DisplayName)
+
+        if isLocalUserMatch then
+            local pendingBalanceText = tostring(latestPendingBalance or amountText or 0)
+            local webhookOk, webhookErr = sendWebhookEvent(
+                "Donation Received",
+                "Local donation event observed for this client. (DONATION)",
+                {
+                    { name = "Donor", value = donorText, inline = true },
+                    { name = "Recipient", value = localUserText, inline = true },
+                    { name = "Donation Amount", value = amountText, inline = true },
+                    { name = "Pending Balance", value = pendingBalanceText, inline = true },
+                },
+                {
+                    color = 0x2ECC71,
+                    author = { name = "DonateToPlayers UI" },
+                    footer = { text = "NotifierEvent local-user trigger" },
+                }
+            )
+
+            if webhookOk then
+                pcall(function()
+                    showNotification("Donation webhook sent: +" .. amountText .. " from " .. donorText)
+                end)
+            else
+                pcall(function()
+                    showNotification("Donation webhook failed: " .. tostring(webhookErr))
+                end)
+            end
+
+            triggerDonationThankYou(donorText)
+        end
+    end)
+end
+
+local function startPendingBalanceUpdateWatcher()
+    if pendingBalanceUpdateConn then
+        return
+    end
+
+    local eventsFolder = game:GetService("ReplicatedStorage"):FindFirstChild("Events")
+    local pendingBalanceUpdate = eventsFolder and eventsFolder:FindFirstChild("PedingBalanceUpdate")
+    if not pendingBalanceUpdate or not pendingBalanceUpdate:IsA("RemoteEvent") then
+        return
+    end
+
+    pendingBalanceUpdateConn = pendingBalanceUpdate.OnClientEvent:Connect(function(pendingBalance)
+        latestPendingBalance = tonumber(pendingBalance) or 0
     end)
 end
 
@@ -496,8 +533,9 @@ if not SETTINGS.selectedEmote or type(SETTINGS.selectedEmote) ~= "string" or SET
     SETTINGS.selectedEmote = EMOTE_OPTIONS[1].name
 end
 
-local donationRaisedWebhookConn = nil
-startDonationRaisedWebhookWatcher()
+startDonationSystemNotifWatcher()
+startNotifierEventWatcher()
+startPendingBalanceUpdateWatcher()
 
 local function parseServerStayDuration(rawValue)
     if rawValue == nil then
@@ -1489,6 +1527,8 @@ local function equipSignTool()
     return tool
 end
 
+local signTextFired = false
+
 local function fireSignTextUpdate()
     if not SETTINGS.autoWalkAndInteract then
         return
@@ -1500,10 +1540,15 @@ local function fireSignTextUpdate()
         return
     end
 
+    if signTextFired then
+        return
+    end
+
     local payload = tostring(SETTINGS.signText or "saving up for a new skin, any amount helps!")
     pcall(function()
         signEvent:FireServer(payload)
     end)
+    signTextFired = true
 end
 
 local saveSignTextBtn = addButton(frames.Main, "Save Sign Text", function()
