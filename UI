@@ -1567,7 +1567,10 @@ local function moveCharacterToWaypoint(targetPos, speedOverride)
 
     local pathStatus = path:ComputeAsync(hrp.Position, targetPos)
     if pathStatus ~= Enum.PathStatus.Success then
-        humanoid:MoveTo(targetPos)
+        local direction = (targetPos - hrp.Position)
+        if direction.Magnitude > 0 then
+            humanoid:MoveTo(hrp.Position + direction.Unit * math.min(direction.Magnitude, 8))
+        end
         return false
     end
 
@@ -1576,10 +1579,15 @@ local function moveCharacterToWaypoint(targetPos, speedOverride)
         if waypoint.Action == Enum.PathWaypointAction.Jump then
             humanoid.Jump = true
         end
-        humanoid:MoveTo(waypoint.Position)
-        local reached = humanoid.MoveToFinished:Wait()
-        if not reached then
-            break
+
+        local waypointTarget = waypoint.Position
+        local distance = (waypointTarget - hrp.Position).Magnitude
+        if distance > 0 and distance < 200 then
+            humanoid:MoveTo(waypointTarget)
+            local reached = humanoid.MoveToFinished:Wait()
+            if not reached then
+                break
+            end
         end
     end
     return true
@@ -1630,29 +1638,43 @@ local function burstJumpAroundCrowd()
         return
     end
 
-    local jumpCount = math.random(2, 6)
-    for _ = 1, jumpCount do
-        humanoid.Jump = true
-        task.wait(0.22)
+    local jumpSequence = {1, 2, 3}
+    for _, jumpCount in ipairs(jumpSequence) do
+        for _ = 1, jumpCount do
+            humanoid.Jump = true
+            task.wait(0.16)
+        end
+        task.wait(0.2)
     end
 end
 
-local function getActivePlayers()
+local function getActivePlayers(maxDistance)
     local active = {}
+    local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp then
+        return active
+    end
+
+    local limit = math.max(1, tonumber(maxDistance) or 45)
     for _, player in ipairs(Players:GetPlayers()) do
         if player ~= LocalPlayer and player.Character then
             local playerHRP = player.Character:FindFirstChild("HumanoidRootPart")
             if playerHRP then
-                table.insert(active, {
-                    player = player,
-                    position = playerHRP.Position,
-                })
+                local dist = (playerHRP.Position - hrp.Position).Magnitude
+                if dist <= limit then
+                    table.insert(active, {
+                        player = player,
+                        position = playerHRP.Position,
+                        distance = dist,
+                    })
+                end
             end
         end
     end
 
     table.sort(active, function(a, b)
-        return a.player and b.player and tostring(a.player.Name) < tostring(b.player.Name)
+        return a.distance < b.distance
     end)
 
     return active
@@ -1672,7 +1694,7 @@ local function getCrowdCenter(activePlayers)
 end
 
 local function getNearestApproachingPlayer()
-    local activePlayers = getActivePlayers()
+    local activePlayers = getActivePlayers(45)
     if #activePlayers == 0 then
         return nil
     end
@@ -1696,14 +1718,14 @@ local function startBoothPatrol()
 
         while SETTINGS.autoWalkAndInteract do
             local now = os.clock()
-            local activePlayers = getActivePlayers()
+            local activePlayers = getActivePlayers(45)
             local crowdCount = #activePlayers
             local nearestPlayer = crowdCount > 0 and activePlayers[1].player or nil
 
-            if crowdCount >= 5 then
+            if crowdCount >= 4 then
                 if not crowdTriggered then
                     crowdTriggered = true
-                    crowdHoldUntil = now + math.random(45, 75)
+                    crowdHoldUntil = now + math.random(20, 45)
                     lookCooldown = now + math.random(2, 5)
                     jumpCooldown = now + math.random(4, 8)
                 end
@@ -1711,8 +1733,9 @@ local function startBoothPatrol()
                 if now < crowdHoldUntil then
                     local crowdCenter = getCrowdCenter(activePlayers)
                     if crowdCenter then
-                        local offset = Vector3.new(math.random(-3, 3), 0, math.random(-3, 3))
-                        moveCharacterToWaypoint(crowdCenter + offset, 24)
+                        local offset = Vector3.new(math.random(-2, 2), 0, math.random(-2, 2))
+                        local closeCrowdTarget = crowdCenter + offset
+                        moveCharacterToWaypoint(closeCrowdTarget, 24)
                     end
 
                     if now >= lookCooldown then
@@ -1763,7 +1786,7 @@ local function startBoothPatrol()
                                 moveCharacterToWaypoint(hrp.Position + Vector3.new(4, 0, 0), 21)
                             end
                         end
-                        if math.random() < 0.35 then
+                        if math.random() < 0.2 then
                             idlePauseUntil = now + math.random(0.75, 2)
                         end
                     end
